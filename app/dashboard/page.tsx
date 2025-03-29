@@ -24,10 +24,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useRouter } from "next/navigation"
+import { useAuth } from "@/contexts/auth-context"
 
 export default function DashboardPage() {
   const [url, setUrl] = useState('')
   const router = useRouter()
+  const { user } = useAuth()
+  
+  // Get the first name from user metadata or fallback to email parsing
+  const firstName = user?.user_metadata?.first_name || 
+    (user?.email 
+      ? user.email.split('@')[0].split('.')[0].charAt(0).toUpperCase() + user.email.split('@')[0].split('.')[0].slice(1) 
+      : "there")
 
   const handleAnalyzeSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -42,7 +50,7 @@ export default function DashboardPage() {
     <>
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-gray-600">Welcome back, John. Here's your research overview.</p>
+        <p className="text-gray-600">Hi {firstName}. Here's your research overview.</p>
       </div>
 
       {/* Research Activity Summary */}

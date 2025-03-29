@@ -11,7 +11,7 @@ function getSupabaseClient() {
   }
 }
 
-export async function signUp(email: string, password: string) {
+export async function signUp(email: string, password: string, firstName?: string, lastName?: string) {
   try {
     console.log('Auth util: Signing up with:', email);
     
@@ -29,6 +29,10 @@ export async function signUp(email: string, password: string) {
       password,
       options: {
         emailRedirectTo: redirectUrl,
+        data: {
+          first_name: firstName,
+          last_name: lastName
+        }
       }
     });
     
@@ -133,10 +137,12 @@ export function onAuthStateChange(callback: (session: Session | null) => void) {
     console.log('Auth util: Setting up auth state change listener');
     
     const supabase = getSupabaseClient();
-    const { data } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('Auth state changed:', { event, hasSession: !!session });
-      callback(session);
-    });
+    const { data } = supabase.auth.onAuthStateChange(
+      (event: string, session: Session | null) => {
+        console.log('Auth state changed:', { event, hasSession: !!session });
+        callback(session);
+      }
+    );
     
     return data.subscription;
   } catch (error) {

@@ -18,12 +18,22 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 
+// Define interface for research topic
+interface ResearchTopic {
+  id: number;
+  topic: string;
+  count: number;
+  lastResearched: string;
+  relatedKeywords: string[];
+  articles: number;
+}
+
 export default function ResearchInterestsPage() {
   const router = useRouter()
   // This would normally be fetched from an API or database
   // For demo purposes, we'll use a state to toggle between having topics and not
   const [hasResearchedTopics, setHasResearchedTopics] = useState(true)
-  const [researchTopics, setResearchTopics] = useState([
+  const [researchTopics, setResearchTopics] = useState<ResearchTopic[]>([
     {
       id: 1,
       topic: "mRNA vaccines",
@@ -73,14 +83,14 @@ export default function ResearchInterestsPage() {
 
   // State for delete confirmation
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
-  const [topicToDelete, setTopicToDelete] = useState(null)
+  const [topicToDelete, setTopicToDelete] = useState<number | null>(null)
 
-  const handleTopicClick = (topic) => {
+  const handleTopicClick = (topic: ResearchTopic) => {
     // Navigate to the research topic page with the topic ID
     router.push(`/dashboard/research-topic/${topic.id}`)
   }
 
-  const handleRemoveTopic = (id) => {
+  const handleRemoveTopic = (id: number) => {
     setResearchTopics(researchTopics.filter((topic) => topic.id !== id))
     setDeleteConfirmOpen(false)
     setTopicToDelete(null)
@@ -133,7 +143,7 @@ export default function ResearchInterestsPage() {
             {/* Add New Interest Button */}
             <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
               <DialogTrigger asChild>
-                <Button className="bg-[#1e3a6d] hover:bg-[#0f2a4d]">
+                <Button className="bg-[#1e3a6d] hover:bg-[#0f2a4d] text-white">
                   <LucidePlus className="h-4 w-4 mr-2" />
                   Add Interest
                 </Button>
@@ -174,7 +184,7 @@ export default function ResearchInterestsPage() {
                     Cancel
                   </Button>
                   <Button
-                    className="bg-[#1e3a6d] hover:bg-[#0f2a4d]"
+                    className="bg-[#1e3a6d] hover:bg-[#0f2a4d] text-white"
                     onClick={handleAddInterest}
                     disabled={!newInterest.trim()}
                   >
@@ -217,7 +227,7 @@ export default function ResearchInterestsPage() {
                 research profile.
               </p>
               <div className="flex gap-4">
-                <Button className="bg-[#1e3a6d] hover:bg-[#0f2a4d]">Analyze Your First Article</Button>
+                <Button className="bg-[#1e3a6d] hover:bg-[#0f2a4d] text-white">Analyze Your First Article</Button>
                 <Button variant="outline" onClick={() => setIsAddDialogOpen(true)}>
                   Add Interest Manually
                 </Button>

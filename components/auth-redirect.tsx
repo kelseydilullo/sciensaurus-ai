@@ -4,7 +4,11 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/contexts/auth-context"
 
-export function AuthRedirect({ redirectTo = "/dashboard", message = "Logging you in..." }) {
+export function AuthRedirect({ 
+  redirectTo = "/dashboard", 
+  message = "Logging you in...",
+  isSignup = false
+}) {
   const router = useRouter()
   const { isLoading, session } = useAuth()
   const [debugInfo, setDebugInfo] = useState("")
@@ -12,20 +16,20 @@ export function AuthRedirect({ redirectTo = "/dashboard", message = "Logging you
 
   useEffect(() => {
     if (session) {
-      setDebugInfo(`Session found for ${session?.user?.email}, redirecting in 2 seconds...`)
+      setDebugInfo(`Session found for ${session?.user?.email}, redirecting...`)
       
-      // Give time to see the debug info
-      const timer = setTimeout(() => {
-        router.push(redirectTo)
-      }, 2000)
-      
-      return () => clearTimeout(timer)
+      // Redirect immediately for better UX
+      router.push(redirectTo)
     } else if (!isLoading) {
-      setDebugInfo(`No session found after ${redirectAttempts} attempts. Please try again.`)
+      if (isSignup) {
+        setDebugInfo("Account created! Please check your email to verify your account.")
+      } else {
+        setDebugInfo(`No session found after ${redirectAttempts} attempts. Please try again.`)
+      }
     } else {
-      setDebugInfo("Checking authentication...")
+      setDebugInfo(isSignup ? "Creating your account..." : "Checking authentication...")
     }
-  }, [isLoading, router, redirectTo, session, redirectAttempts])
+  }, [isLoading, router, redirectTo, session, redirectAttempts, isSignup])
   
   // Count redirect attempts
   useEffect(() => {
@@ -44,13 +48,20 @@ export function AuthRedirect({ redirectTo = "/dashboard", message = "Logging you
         <div className="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#1e3a6d] mb-4"></div>
         <h3 className="text-xl font-medium text-gray-900">{message}</h3>
         <p className="text-gray-600">{debugInfo}</p>
-        {redirectAttempts > 3 && (
-          <button 
-            onClick={() => router.push('/login')}
-            className="mt-4 px-4 py-2 bg-[#1e3a6d] text-white rounded-md hover:bg-[#0f2a4d]"
-          >
-            Back to login
-          </button>
+        {(redirectAttempts > 3 || (isSignup && redirectAttempts > 1)) && (
+          <div className="mt-4 space-y-2">
+            {isSignup ? (
+              <p className="text-sm text-gray-600">
+                We've sent a verification email. Please check your inbox.
+              </p>
+            ) : null}
+            <button 
+              onClick={() => router.push('/login')}
+              className="px-4 py-2 bg-[#1e3a6d] text-white rounded-md hover:bg-[#0f2a4d]"
+            >
+              Back to login
+            </button>
+          </div>
         )}
       </div>
     </div>

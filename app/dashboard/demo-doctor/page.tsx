@@ -215,8 +215,33 @@ const sharedArticles = [
   },
 ]
 
+// Define interface for article
+interface Article {
+  id: number;
+  title: string;
+  journal: string;
+  date: string;
+  relevanceScore: number;
+  isNew: boolean;
+  category: string;
+  keywords: string[];
+  summary: string;
+  clinicalImplications?: string[];
+  practiceRecommendations?: string[];
+  supportingEvidence?: {
+    title: string;
+    finding: string;
+    strength: string;
+  }[];
+  contradictoryEvidence?: {
+    title: string;
+    finding: string;
+    strength: string;
+  }[];
+}
+
 export default function DemoDoctorView() {
-  const [selectedArticle, setSelectedArticle] = useState(null)
+  const [selectedArticle, setSelectedArticle] = useState<Article | null>(null)
   const [activeTab, setActiveTab] = useState("all")
 
   const handleBackToInbox = () => {
@@ -265,7 +290,7 @@ export default function DemoDoctorView() {
                     <span>Notifications</span>
                     <Badge className="ml-1 bg-red-500 text-white">3</Badge>
                   </Button>
-                  <Button className="bg-[#1e3a6d] hover:bg-[#0f2a4d]">Update Preferences</Button>
+                  <Button className="bg-[#1e3a6d] hover:bg-[#0f2a4d] text-white">Update Preferences</Button>
                 </div>
               </div>
 
@@ -325,7 +350,7 @@ export default function DemoDoctorView() {
                               </div>
                               <p className="text-gray-600 mt-3 line-clamp-2">{article.summary}</p>
                               <div className="flex flex-wrap gap-2 mt-3">
-                                {article.keywords.slice(0, 3).map((keyword, idx) => (
+                                {article.keywords.slice(0, 3).map((keyword: string, idx: number) => (
                                   <Badge key={idx} variant="outline" className="bg-gray-50">
                                     {keyword}
                                   </Badge>
@@ -469,7 +494,7 @@ export default function DemoDoctorView() {
                     <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">{selectedArticle.title}</h1>
 
                     <div className="flex flex-wrap gap-2 mt-3">
-                      {selectedArticle.keywords.map((keyword, idx) => (
+                      {selectedArticle.keywords.map((keyword: string, idx: number) => (
                         <Link href={`/dashboard/research-topic/1`} key={idx}>
                           <Badge
                             variant="outline"
@@ -520,9 +545,9 @@ export default function DemoDoctorView() {
                   <CardDescription>How this research may impact clinical practice</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <ul className="space-y-3">
-                    {selectedArticle.clinicalImplications?.map((implication, idx) => (
-                      <li key={idx} className="flex gap-3">
+                  <ul className="mt-2 space-y-2">
+                    {selectedArticle.clinicalImplications?.map((implication: string, idx: number) => (
+                      <li key={idx} className="flex items-start gap-2">
                         <span className="text-[#1e3a6d] font-bold">•</span>
                         <span className="text-gray-700">{implication}</span>
                       </li>
@@ -539,7 +564,7 @@ export default function DemoDoctorView() {
                 </CardHeader>
                 <CardContent>
                   <ul className="space-y-3">
-                    {selectedArticle.practiceRecommendations?.map((recommendation, idx) => (
+                    {selectedArticle.practiceRecommendations?.map((recommendation: string, idx: number) => (
                       <li key={idx} className="flex gap-3">
                         <LucideCheck className="h-5 w-5 text-green-600 flex-shrink-0" />
                         <span className="text-gray-700">{recommendation}</span>
@@ -559,7 +584,7 @@ export default function DemoDoctorView() {
                   </CardHeader>
                   <CardContent>
                     <ul className="space-y-4">
-                      {selectedArticle.supportingEvidence?.map((evidence, idx) => (
+                      {selectedArticle.supportingEvidence?.map((evidence: any, idx: number) => (
                         <li key={idx} className="border-l-4 border-green-500 pl-4 py-1">
                           <h4 className="font-medium text-gray-900">{evidence.title}</h4>
                           <p className="text-sm text-gray-700 mt-1">{evidence.finding}</p>
@@ -578,7 +603,7 @@ export default function DemoDoctorView() {
                   </CardHeader>
                   <CardContent>
                     <ul className="space-y-4">
-                      {selectedArticle.contradictoryEvidence?.map((evidence, idx) => (
+                      {selectedArticle.contradictoryEvidence?.map((evidence: any, idx: number) => (
                         <li key={idx} className="border-l-4 border-amber-500 pl-4 py-1">
                           <h4 className="font-medium text-gray-900">{evidence.title}</h4>
                           <p className="text-sm text-gray-700 mt-1">{evidence.finding}</p>
@@ -606,7 +631,7 @@ export default function DemoDoctorView() {
                     personalized implications.
                   </p>
                   <div className="flex gap-3">
-                    <Button className="bg-[#1e3a6d]">Preview Patient Version</Button>
+                    <Button className="bg-[#1e3a6d] text-white">Preview Patient Version</Button>
                     <Button variant="outline">Share with Patient</Button>
                   </div>
                 </CardContent>

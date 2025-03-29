@@ -5,13 +5,21 @@ import { Session } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation';
 import * as AuthUtils from '@/utils/supabase/auth';
 
+type UserWithMetadata = Session['user'] & {
+  user_metadata?: {
+    first_name?: string;
+    last_name?: string;
+  }
+};
+
 type AuthContextType = {
   session: Session | null;
-  user: Session['user'] | null;
+  user: UserWithMetadata | null;
   isLoading: boolean;
   error: string | null;
   signIn: (email: string, password: string) => Promise<{ error: any; success?: boolean }>;
-  signUp: (email: string, password: string) => Promise<{ error: any; success?: boolean }>;
+  signUp: (email: string, password: string, firstName?: string, lastName?: string) => 
+    Promise<{ error: any; success?: boolean; emailConfirmed?: boolean }>;
   signOut: () => Promise<{ error: any }>;
   resetPassword: (email: string) => Promise<{ error: any }>;
 };
@@ -31,6 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         userId: session.user?.id,
         email: session.user?.email,
         accessToken: session.access_token?.substring(0, 8) + '...',
+        metadata: session.user?.user_metadata
       });
     }
   }, [session]);
@@ -116,33 +125,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  async function signUp(email: string, password: string) {
+  async function signUp(email: string, password: string, firstName?: string, lastName?: string) {
     try {
       console.log('Attempting sign up for:', email);
       setIsLoading(true);
-      const { data, error } = await AuthUtils.signUp(email, password);
+      const { data, error } = await AuthUtils.signUp(email, password, firstName, lastName);
       
       if (error) {
         console.error('Sign up error:', error.message);
         setError(error.message);
-        return { error, success: false };
+        return { error, success: false, emailConfirmed: false };
       }
       
       if (data?.session) {
         console.log('Sign up successful with session, user:', data.user?.id);
         setSession(data.session);
         setError(null);
-        return { error: null, success: true };
+        return { error: null, success: true, emailConfirmed: true };
       }
       
-      // Email confirmation might be required, so there might not be a session immediately
-      console.log('Sign up successful, email confirmation may be required');
+      // Email confirmation is required - this is the most common case with Supabase
+      console.log('Sign up successful, email confirmation required');
       setError(null);
-      return { error: null, success: true };
+      return { error: null, success: true, emailConfirmed: false };
     } catch (error: any) {
       console.error('Error signing up:', error);
       setError(error?.message || 'Unknown error during sign up');
-      return { error, success: false };
+      return { error, success: false, emailConfirmed: false };
     } finally {
       setIsLoading(false);
     }
