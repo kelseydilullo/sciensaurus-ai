@@ -81,12 +81,14 @@ export function DashboardSidebar() {
       <SidebarHeader className="p-6 border-b border-gray-100">
         <div className="flex items-center justify-between">
           {expanded ? (
-            <div className="flex items-center">
+            <Link href="/dashboard" className="flex items-center">
               <SciensaurusLogo className="h-8 w-8 text-[#1e3a6d]" />
               <span className="ml-2 font-bold text-[#1e3a6d] text-lg">Sciensaurus</span>
-            </div>
+            </Link>
           ) : (
-            <SciensaurusLogo className="h-8 w-8 text-[#1e3a6d]" />
+            <Link href="/dashboard">
+              <SciensaurusLogo className="h-8 w-8 text-[#1e3a6d]" />
+            </Link>
           )}
           <button
             onClick={toggleSidebar}
