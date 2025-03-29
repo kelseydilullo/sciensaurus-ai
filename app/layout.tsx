@@ -1,43 +1,54 @@
-import type React from "react"
-import "./globals.css"
-import { Outfit } from "next/font/google"
-import { ThemeProvider } from "@/components/theme-provider"
+import type { Metadata, Viewport } from 'next';
+import { Outfit } from 'next/font/google';
+import './globals.css';
+import { ThemeProvider } from '@/components/theme-provider';
+import { AuthProvider } from '@/contexts/auth-context';
+import { DebugTools } from '@/components/debug-tools';
 
-// Using a different variable name to avoid redeclaration
-const outfitFont = Outfit({ subsets: ["latin"] })
+const outfit = Outfit({ subsets: ['latin'] });
 
-// Using a different variable name to avoid redeclaration
-export const metadataConfig = {
-  title: "Sciensaurus - AI Scientific Research Companion",
-  description:
-    "AI-powered scientific research companion that makes complex research accessible with clear summaries, key insights, and related research.",
-}
+export const metadata: Metadata = {
+  title: 'Sciensaurus',
+  description: 'Democratizing scientific knowledge for everyone',
+  manifest: '/manifest.json',
+  icons: {
+    apple: '/icons/apple-touch-icon.svg',
+    icon: [
+      {
+        url: '/favicon.svg',
+        sizes: 'any',
+        type: 'image/svg+xml'
+      },
+      {
+        url: '/icons/icon-192x192.svg',
+        type: 'image/svg+xml',
+        sizes: '192x192',
+      },
+      {
+        url: '/icons/icon-512x512.svg',
+        type: 'image/svg+xml',
+        sizes: '512x512',
+      },
+    ],
+  },
+};
 
-// Renamed to avoid duplicate function implementation
-export function FirstRootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
-  return (
-    <html lang="en">
-      <body>{children}</body>
-    </html>
-  )
-}
-
-const outfit = Outfit({ subsets: ["latin"] })
-
-export const metadata = {
-  title: "Sciensaurus - AI Scientific Research Companion",
-  description:
-    "AI-powered scientific research companion that makes complex research accessible with clear summaries, key insights, and related research.",
-}
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  minimumScale: 1,
+  maximumScale: 5,
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#fafafa' },
+    { media: '(prefers-color-scheme: dark)', color: '#1a1a1a' },
+  ],
+};
 
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode
+  children: React.ReactNode;
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
@@ -47,12 +58,14 @@ export default function RootLayout({
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange
-          storageKey="sciensaurus-theme"
         >
-          {children}
+          <AuthProvider>
+            {children}
+            <DebugTools />
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>
-  )
+  );
 }
 

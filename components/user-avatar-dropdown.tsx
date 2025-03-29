@@ -1,7 +1,8 @@
 "use client"
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Button } from "@/components/ui/button"
+import React from 'react';
+import Link from 'next/link';
+import { useAuth } from '@/contexts/auth-context';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,43 +10,57 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { LucideSettings, LucideHelpCircle, LucideLogOut } from "lucide-react"
+} from '@/components/ui/dropdown-menu';
 
 export function UserAvatarDropdown() {
+  const { user, signOut } = useAuth();
+  
+  const userEmail = user?.email || 'kelsey@sciensaurus.com';
+  const initials = userEmail
+    ? userEmail
+        .split('@')[0]
+        .split('.')
+        .map(part => part[0]?.toUpperCase() || '')
+        .join('')
+        .substring(0, 2)
+    : 'K';  // Default to K for demo
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-          <Avatar className="h-8 w-8">
-            <AvatarImage src="/placeholder.svg?height=32&width=32" alt="User" />
-            <AvatarFallback className="text-[#1e3a6d] font-medium">J</AvatarFallback>
-          </Avatar>
-        </Button>
+        <button className="flex items-center justify-center focus:outline-none">
+          <div className="h-10 w-10 rounded-full flex items-center justify-center overflow-hidden bg-[#1e3a6d] text-white border-2 border-white cursor-pointer">
+            <span className="text-sm font-medium">{initials}</span>
+          </div>
+        </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent className="w-56" align="end" forceMount>
-        <DropdownMenuLabel className="font-normal">
+      <DropdownMenuContent align="end" className="w-56 bg-white shadow-lg border border-gray-200 rounded-md p-1 mt-1">
+        <DropdownMenuLabel className="bg-white py-2">
           <div className="flex flex-col space-y-1">
-            <p className="text-sm font-medium leading-none">John Doe</p>
-            <p className="text-xs leading-none text-muted-foreground">john.doe@example.com</p>
+            <p className="text-sm font-semibold">My Account</p>
+            <p className="text-xs text-gray-500 truncate">{userEmail}</p>
           </div>
         </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem>
-          <LucideSettings className="mr-2 h-4 w-4" />
-          <span>Settings</span>
-        </DropdownMenuItem>
-        <DropdownMenuItem>
-          <LucideHelpCircle className="mr-2 h-4 w-4" />
-          <span>Help</span>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => (window.location.href = "/")}>
-          <LucideLogOut className="mr-2 h-4 w-4" />
-          <span>Logout</span>
-        </DropdownMenuItem>
+        <DropdownMenuSeparator className="bg-gray-200" />
+        
+        <div className="py-1">
+          <Link href="/dashboard/profile" className="block w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+            Profile
+          </Link>
+          <Link href="/dashboard/settings" className="block w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+            Settings
+          </Link>
+        </div>
+        
+        <DropdownMenuSeparator className="bg-gray-200" />
+        <button 
+          className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer"
+          onClick={() => signOut()}
+        >
+          Sign out
+        </button>
       </DropdownMenuContent>
     </DropdownMenu>
-  )
+  );
 }
 
