@@ -1,0 +1,2 @@
+          // Find emoji at start of line
+          const emojiMatch = item.match(/^[-\s•⦁*]*\s*([🧬🔬🧪📊🔍])/u);
