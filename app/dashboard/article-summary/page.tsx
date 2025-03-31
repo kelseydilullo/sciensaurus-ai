@@ -7,10 +7,27 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BookmarkIcon, Share2Icon, DownloadIcon, PrinterIcon, ExternalLinkIcon, ArrowLeft } from "lucide-react";
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  Legend, 
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Sector,
+  LabelList
+} from 'recharts';
 
 export default function ArticleSummaryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Add a timestamp to force re-rendering
+  const cacheInvalidator = Date.now();
   const [url, setUrl] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -20,8 +37,10 @@ export default function ArticleSummaryPage() {
   const [articleTitle, setArticleTitle] = useState("");
   const [articleSource, setArticleSource] = useState("");
   const [publishDate, setPublishDate] = useState("");
+  const [activeGenderIndex, setActiveGenderIndex] = useState<number | undefined>(undefined);
 
   useEffect(() => {
+    console.log("ArticleSummaryPage rendered with cache key:", cacheInvalidator);
     // Get URL from query parameters or session storage
     const urlParam = searchParams.get('url');
     const storedUrl = typeof window !== 'undefined' ? sessionStorage.getItem('articleUrl') : null;
@@ -58,49 +77,8 @@ export default function ArticleSummaryPage() {
           if (pmcMatch) {
             fallbackTitle = `PMC Article ${pmcMatch[1]}`;
             
-            // Try to fetch the article's HTML to extract the title
-            try {
-              const response = await fetch(articleUrl);
-              const html = await response.text();
-              
-              // Look for title tags specific to PubMed/NCBI
-              const titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/i) || 
-                                html.match(/<meta\s+name="citation_title"\s+content="([^"]+)"/i) ||
-                                html.match(/<title>([^<]+)<\/title>/i);
-              
-              if (titleMatch && titleMatch[1]) {
-                const extractedTitle = titleMatch[1].trim();
-                if (extractedTitle.length > 5 && !extractedTitle.includes('PMC') && !extractedTitle.includes('PubMed')) {
-                  // Clean up the title - sometimes it includes the journal name or other metadata
-                  let cleanTitle = extractedTitle;
-                  
-                  // Remove "PMC" or "PubMed Central" prefix if present
-                  cleanTitle = cleanTitle.replace(/^PMC\s*[-:]\s*/i, '');
-                  cleanTitle = cleanTitle.replace(/^PubMed Central\s*[-:]\s*/i, '');
-                  
-                  // Remove journal information that might be in the title tag
-                  const journalSeparators = [' - PMC', ' - PubMed', ' - NCBI', ' | National Library of Medicine'];
-                  for (const separator of journalSeparators) {
-                    if (cleanTitle.includes(separator)) {
-                      cleanTitle = cleanTitle.split(separator)[0].trim();
-                    }
-                  }
-                  
-                  fallbackTitle = cleanTitle;
-                }
-              }
-              
-              // If we couldn't extract a good title from the HTML tags, try to find it in specific elements
-              if (fallbackTitle.startsWith('PMC Article')) {
-                // Look for the article title in specific elements that PubMed uses
-                const h1Match = html.match(/<h1[^>]*id="[^"]*-title"[^>]*>([^<]+)<\/h1>/i);
-                if (h1Match && h1Match[1]) {
-                  fallbackTitle = h1Match[1].trim();
-                }
-              }
-            } catch (e) {
-              console.error("Error fetching article HTML:", e);
-            }
+            // We'll get the article title from our API response instead of direct fetch
+            // which would cause CORS issues
           }
         }
         
@@ -185,7 +163,8 @@ export default function ArticleSummaryPage() {
         },
         body: JSON.stringify({ 
           url: articleUrl,
-          extractOriginalTitle: true  // Add this flag to indicate we want the original title
+          extractOriginalTitle: true,  // Add this flag to indicate we want the original title
+          fetchMetadata: true          // Add this flag to indicate we want to fetch title/metadata server-side
         }),
       });
       
@@ -486,7 +465,47 @@ export default function ArticleSummaryPage() {
   // Function to parse the plain text response
   const parseTextResponse = (text: string) => {
     try {
-      const result = {
+      // Define the types for the cohort analysis data structure
+      type GenderDistribution = {
+        male: number;
+        female: number;
+        other: number;
+      }
+      
+      type AgeRange = {
+        range: string;
+        percentage: number;
+      }
+      
+      type GeographicRegion = {
+        region: string;
+        percentage: number;
+      }
+      
+      type CohortStratification = {
+        gender: GenderDistribution;
+        ageRanges: AgeRange[];
+        demographics: GeographicRegion[];
+      }
+      
+      type CohortAnalysis = {
+        studyType: string;
+        duration: string;
+        dateRange: string;
+        cohortSize: number;
+        cohortStratification: CohortStratification;
+        notes: string[];
+      }
+      
+      type ResultData = {
+        title: string;
+        originalTitle: string;
+        visualSummary: { emoji: string; point: string }[];
+        keywords: string[];
+        cohortAnalysis: CohortAnalysis;
+      }
+      
+      const result: ResultData = {
         title: "",
         originalTitle: "",
         visualSummary: [] as { emoji: string; point: string }[],
@@ -502,8 +521,8 @@ export default function ArticleSummaryPage() {
               female: 0,
               other: 0
             },
-            ageRanges: [] as { range: string; percentage: number }[],
-            demographics: [] as { region: string; percentage: number }[]
+            ageRanges: [] as AgeRange[],
+            demographics: [] as GeographicRegion[]
           },
           notes: [] as string[]
         }
@@ -716,18 +735,276 @@ export default function ArticleSummaryPage() {
         // Cohort size
         const sizeLine = cohortLines.find(line => 
           line.startsWith('Cohort size:') || 
-          line.startsWith('Size:')
+          line.startsWith('Size:') ||
+          line.startsWith('Sample Size:')
         );
         if (sizeLine) {
           const sizeText = sizeLine
             .replace('Cohort size:', '')
             .replace('Size:', '')
+            .replace('Sample Size:', '')
             .trim();
           
           if (sizeText && sizeText !== 'Not specified' && sizeText !== 'N/A' && sizeText !== 'Not applicable') {
             const numberMatch = sizeText.match(/\d+/);
             if (numberMatch) {
               result.cohortAnalysis.cohortSize = parseInt(numberMatch[0], 10);
+            }
+          }
+        }
+        
+        // Parse age distribution
+        const ageDistributionStart = cohortLines.findIndex(line => 
+          line.includes('Age Distribution') || 
+          line.includes('Age Ranges') ||
+          line.includes('Age Groups')
+        );
+        
+        if (ageDistributionStart !== -1) {
+          let i = ageDistributionStart + 1;
+          
+          // Special handling for text descriptions of age distribution
+          const ageNotes = [];
+          
+          // Continue until we find a line that doesn't look like age data
+          while (i < cohortLines.length) {
+            const line = cohortLines[i].trim();
+            
+            // Skip empty lines
+            if (line === '') {
+              i++;
+              continue;
+            }
+            
+            // Capture age-related notes for display if we don't get structured data
+            if (line && !line.includes('Gender:') && !line.includes('Geographic Distribution:')) {
+              ageNotes.push(line);
+            }
+            
+            // Look for patterns like "X out of Y participants were in age group Z"
+            const ageGroupPattern = line.match(/(\d+)\s*out\s*of\s*(\d+).*?(under|over|above|below|between)\s*(\d+).*?(years|yrs)/i);
+            if (ageGroupPattern) {
+              // Extract the actual counts and age information
+              const count = parseInt(ageGroupPattern[1], 10);
+              const total = parseInt(ageGroupPattern[2], 10);
+              const ageDirection = ageGroupPattern[3].toLowerCase();
+              const ageValue = parseInt(ageGroupPattern[4], 10);
+              
+              // Only process if we have valid numbers
+              if (!isNaN(count) && !isNaN(total) && !isNaN(ageValue) && total > 0) {
+                // Calculate the percentage
+                const percentage = (count / total) * 100;
+                
+                // Determine the age range label based on the text
+                let ageRange = '';
+                if (ageDirection === 'under' || ageDirection === 'below') {
+                  ageRange = `Under ${ageValue}`;
+                  
+                  // Add this specific age range
+                  result.cohortAnalysis.cohortStratification.ageRanges.push({
+                    range: ageRange,
+                    percentage
+                  });
+                  
+                  // Add the complementary age range
+                  result.cohortAnalysis.cohortStratification.ageRanges.push({
+                    range: `${ageValue}+`,
+                    percentage: 100 - percentage
+                  });
+                } else if (ageDirection === 'over' || ageDirection === 'above') {
+                  ageRange = `${ageValue}+`;
+                  
+                  // Add this specific age range
+                  result.cohortAnalysis.cohortStratification.ageRanges.push({
+                    range: ageRange,
+                    percentage
+                  });
+                  
+                  // Add the complementary age range
+                  result.cohortAnalysis.cohortStratification.ageRanges.push({
+                    range: `Under ${ageValue}`,
+                    percentage: 100 - percentage
+                  });
+                }
+                
+                // Store the original text description as a note
+                if (!result.cohortAnalysis.notes) {
+                  result.cohortAnalysis.notes = [];
+                }
+                result.cohortAnalysis.notes.push(line);
+                
+                i++;
+                continue;
+              }
+            }
+            
+            // Check if this looks like an age range line
+            const ageMatch = line.match(/(\d+[-–]\d+|\d+\+|\d+\s*and\s*over|under\s*\d+)\s*[:\s]*(\d+\.?\d*)%?/i);
+            
+            if (ageMatch && ageMatch[1] && ageMatch[2]) {
+              let ageRange = ageMatch[1].trim();
+              const percentageStr = ageMatch[2].trim();
+              const percentage = parseFloat(percentageStr);
+              
+              // Standardize age range format
+              if (ageRange.match(/^(\d+)-(\d)$/)) {
+                // Handle truncated ranges like 18-2 (should be 18-24)
+                if (ageRange === "18-2") ageRange = "18-24";
+                else if (ageRange === "25-3") ageRange = "25-34";
+                else if (ageRange === "35-4") ageRange = "35-49";
+                else if (ageRange === "50-6") ageRange = "50-64";
+              }
+              
+              if (!isNaN(percentage)) {
+                result.cohortAnalysis.cohortStratification.ageRanges.push({
+                  range: ageRange,
+                  percentage
+                });
+              }
+              i++;
+            } else {
+              // If this line doesn't contain age data but does contain relevant age text,
+              // save it as a note for potential use in display
+              if (line.toLowerCase().includes('age') && 
+                  (line.includes('year') || line.includes('yr') || 
+                   line.includes('old') || line.includes('young'))) {
+                ageNotes.push(line);
+                i++;
+                continue;
+              }
+              
+              // Try a different format: look for age range followed by percentage on separate line
+              const ageRangeOnly = line.match(/(\d+[-–]\d+|\d+\+|\d+\s*and\s*over|under\s*\d+)$/i);
+              
+              if (ageRangeOnly && ageRangeOnly[1] && i + 1 < cohortLines.length) {
+                const nextLine = cohortLines[i + 1].trim();
+                const percentageMatch = nextLine.match(/(\d+\.?\d*)%?/);
+                
+                if (percentageMatch && percentageMatch[1]) {
+                  const ageRange = ageRangeOnly[1].trim();
+                  const percentageStr = percentageMatch[1].trim();
+                  const percentage = parseFloat(percentageStr);
+                  
+                  if (!isNaN(percentage)) {
+                    result.cohortAnalysis.cohortStratification.ageRanges.push({
+                      range: ageRange,
+                      percentage
+                    });
+                  }
+                  i += 2; // Skip both the age range line and the percentage line
+                  continue;
+                }
+              }
+              
+              // If we get here, this doesn't look like age distribution data anymore
+              break;
+            }
+          }
+          
+          // If we didn't find any structured age data but did find age text notes,
+          // add them to the notes section
+          if (result.cohortAnalysis.cohortStratification.ageRanges.length === 0 && ageNotes.length > 0) {
+            for (const note of ageNotes) {
+              if (!result.cohortAnalysis.notes.includes(note)) {
+                result.cohortAnalysis.notes.push(note);
+              }
+            }
+          }
+        }
+        
+        // Parse gender distribution
+        const genderLine = cohortLines.find(line => 
+          line.includes('Gender') || 
+          line.includes('Sex')
+        );
+        
+        if (genderLine) {
+          // Look for male/female percentages within the gender line
+          const maleFemaleMatch = genderLine.match(/Male\s*:?\s*(\d+\.?\d*)%\s*,?\s*Female\s*:?\s*(\d+\.?\d*)%/i) || 
+                                  genderLine.match(/Female\s*:?\s*(\d+\.?\d*)%\s*,?\s*Male\s*:?\s*(\d+\.?\d*)%/i);
+          
+          if (maleFemaleMatch) {
+            // Check if Female comes first in the match
+            if (maleFemaleMatch[0].toLowerCase().indexOf('female') < maleFemaleMatch[0].toLowerCase().indexOf('male')) {
+              result.cohortAnalysis.cohortStratification.gender.female = parseFloat(maleFemaleMatch[1]);
+              result.cohortAnalysis.cohortStratification.gender.male = parseFloat(maleFemaleMatch[2]);
+            } else {
+              result.cohortAnalysis.cohortStratification.gender.male = parseFloat(maleFemaleMatch[1]);
+              result.cohortAnalysis.cohortStratification.gender.female = parseFloat(maleFemaleMatch[2]);
+            }
+          } else {
+            // Check lines following the gender line
+            const genderIndex = cohortLines.indexOf(genderLine);
+            
+            if (genderIndex !== -1) {
+              // Look for male percentage
+              for (let i = genderIndex + 1; i < Math.min(genderIndex + 5, cohortLines.length); i++) {
+                const maleLine = cohortLines[i].match(/Male\s*:?\s*(\d+\.?\d*)%/i);
+                if (maleLine && maleLine[1]) {
+                  result.cohortAnalysis.cohortStratification.gender.male = parseFloat(maleLine[1]);
+                  break;
+                }
+              }
+              
+              // Look for female percentage
+              for (let i = genderIndex + 1; i < Math.min(genderIndex + 5, cohortLines.length); i++) {
+                const femaleLine = cohortLines[i].match(/Female\s*:?\s*(\d+\.?\d*)%/i);
+                if (femaleLine && femaleLine[1]) {
+                  result.cohortAnalysis.cohortStratification.gender.female = parseFloat(femaleLine[1]);
+                  break;
+                }
+              }
+              
+              // Look for other gender percentage
+              for (let i = genderIndex + 1; i < Math.min(genderIndex + 5, cohortLines.length); i++) {
+                const otherLine = cohortLines[i].match(/Other\s*:?\s*(\d+\.?\d*)%/i);
+                if (otherLine && otherLine[1]) {
+                  result.cohortAnalysis.cohortStratification.gender.other = parseFloat(otherLine[1]);
+                  break;
+                }
+              }
+            }
+          }
+        }
+        
+        // Parse geographic distribution
+        const geoDistributionStart = cohortLines.findIndex(line => 
+          line.includes('Geographic Distribution') || 
+          line.includes('Geography') ||
+          line.includes('Regions')
+        );
+        
+        if (geoDistributionStart !== -1) {
+          let i = geoDistributionStart + 1;
+          
+          // Continue until we find a line that doesn't look like geographic data
+          while (i < cohortLines.length) {
+            const line = cohortLines[i].trim();
+            
+            // Skip empty lines
+            if (line === '') {
+              i++;
+              continue;
+            }
+            
+            // Check if this looks like a region line
+            const geoMatch = line.match(/(North America|South America|Europe|Asia|Africa|Oceania|Australia|Middle East|Eastern Europe|Western Europe|Latin America|Central America|Caribbean|Pacific|Mediterranean)[:\s]*(\d+\.?\d*)%/i) ||
+                             line.match(/(United States|USA|Canada|UK|United Kingdom|China|Japan|Germany|France|Italy|Spain|Brazil|India|Russia|Australia)[:\s]*(\d+\.?\d*)%/i);
+            
+            if (geoMatch) {
+              const region = geoMatch[1].trim();
+              let percentage = parseFloat(geoMatch[2]);
+              
+              if (!isNaN(percentage)) {
+                result.cohortAnalysis.cohortStratification.demographics.push({
+                  region,
+                  percentage
+                });
+              }
+              i++;
+            } else {
+              // If we get here, this doesn't look like geographic data anymore
+              break;
             }
           }
         }
@@ -926,6 +1203,7 @@ export default function ArticleSummaryPage() {
       return <div className="text-gray-500 italic">No cohort analysis available</div>;
     }
 
+    // Only use actual values from the API response, no defaults
     const {
       studyType,
       duration,
@@ -935,8 +1213,134 @@ export default function ArticleSummaryPage() {
       notes
     } = result.cohortAnalysis;
 
+    // Colors for charts
+    const CHART_COLORS = [
+      '#3b82f6', // blue-500
+      '#8b5cf6', // violet-500
+      '#ec4899', // pink-500
+      '#f97316', // orange-500
+      '#10b981', // emerald-500
+      '#6366f1', // indigo-500
+      '#facc15', // yellow-500
+      '#ef4444', // red-500
+      '#8b5cf6', // violet-500
+      '#14b8a6', // teal-500
+    ];
+
+    // Check if we have actual gender data
+    const hasGenderData = 
+      cohortStratification?.gender && 
+      (cohortStratification.gender.male > 0 || 
+      cohortStratification.gender.female > 0 || 
+      cohortStratification.gender.other > 0);
+
+    // Only create gender data if it actually exists
+    const genderData = hasGenderData ? [
+      { name: 'Male', value: cohortStratification.gender.male },
+      { name: 'Female', value: cohortStratification.gender.female },
+      ...(cohortStratification.gender.other > 0 ? [{ name: 'Other', value: cohortStratification.gender.other }] : [])
+    ] : [];
+
+    // Calculate study duration in months from string if possible
+    const getDurationInMonths = (): number => {
+      if (!duration) return 0;
+      
+      const yearMatch = duration.match(/(\d+)\s*(?:year|yr)/i);
+      const monthMatch = duration.match(/(\d+)\s*(?:month|mo)/i);
+      
+      let months = 0;
+      if (yearMatch && yearMatch[1]) {
+        months += parseInt(yearMatch[1]) * 12;
+      }
+      if (monthMatch && monthMatch[1]) {
+        months += parseInt(monthMatch[1]);
+      }
+      
+      // If no specific duration found, estimate based on text
+      if (months === 0) {
+        if (duration.toLowerCase().includes('long-term')) return 36;
+        if (duration.toLowerCase().includes('medium')) return 18; 
+        if (duration.toLowerCase().includes('short')) return 6;
+      }
+      
+      return months;
+    };
+    
+    const durationMonths = getDurationInMonths();
+    const durationPercentage = durationMonths > 0 ? Math.min(100, Math.max(10, (durationMonths / 36) * 100)) : 0;
+
+    // Check if we have age data
+    const hasAgeData = cohortStratification?.ageRanges && cohortStratification.ageRanges.length > 0;
+    const hasOnlyOneAgeRange = hasAgeData && cohortStratification.ageRanges.length === 1;
+    
+    // Store any textual age-related notes
+    const ageTextNotes = notes?.filter((note: string) => 
+      note.toLowerCase().includes('age') || 
+      note.toLowerCase().includes('year') ||
+      note.toLowerCase().includes('old') ||
+      note.toLowerCase().includes('young')
+    ) || [];
+    
+    // Transform age data to include counts instead of just percentages
+    let ageRangesData = [];
+    if (hasAgeData && cohortSize > 0) {
+      // Process the age ranges data to add count and ensure percentages add up to 100%
+      let totalPercentage = 0;
+      ageRangesData = cohortStratification.ageRanges.map((range: { range: string, percentage: number }) => {
+        totalPercentage += range.percentage;
+        // Fix any cut-off age range labels - ensure they display correctly
+        let fixedRange = range.range;
+        
+        // Handle common truncated formats that might come from the API
+        if (fixedRange === "18-2") fixedRange = "18-24";
+        else if (fixedRange === "25-3") fixedRange = "25-34";
+        else if (fixedRange === "35-4") fixedRange = "35-49";
+        else if (fixedRange === "50-6") fixedRange = "50-64";
+        
+        return {
+          ...range,
+          range: fixedRange,
+          // Calculate the count of participants based on percentage
+          count: Math.round((range.percentage / 100) * cohortSize)
+        };
+      });
+      
+      // Adjust if percentages don't add up to 100%
+      if (totalPercentage > 0 && Math.abs(totalPercentage - 100) > 1) {
+        // Scale all percentages to add up to 100%
+        const scaleFactor = 100 / totalPercentage;
+        ageRangesData = ageRangesData.map((range: { range: string, percentage: number, count: number }) => ({
+          ...range,
+          percentage: Math.round(range.percentage * scaleFactor),
+          // Recalculate count based on adjusted percentage
+          count: Math.round((range.percentage * scaleFactor / 100) * cohortSize)
+        }));
+      }
+      
+      // Ensure total count matches cohort size by adjusting the largest group if needed
+      const totalCount = ageRangesData.reduce((sum: number, range: { count: number }) => sum + range.count, 0);
+      if (totalCount !== cohortSize && ageRangesData.length > 0) {
+        // Find the largest group to adjust
+        const largestGroupIndex = ageRangesData.reduce(
+          (maxIndex: number, range: { count: number }, index: number, arr: Array<{ count: number }>) => 
+            range.count > arr[maxIndex].count ? index : maxIndex, 
+          0
+        );
+        // Adjust the count of the largest group
+        ageRangesData[largestGroupIndex].count += (cohortSize - totalCount);
+        // Recalculate its percentage
+        ageRangesData[largestGroupIndex].percentage = Math.round(
+          (ageRangesData[largestGroupIndex].count / cohortSize) * 100
+        );
+      }
+    }
+    
+    // Check if we have geographic data
+    const hasGeoData = cohortStratification?.demographics && cohortStratification.demographics.length > 0;
+
     return (
-      <div className="space-y-5">
+      <div className="space-y-6">
+        {/* Study Type - Only show if present */}
         {studyType && (
           <div>
             <h4 className="text-gray-700 font-medium mb-1">Study Type</h4>
@@ -944,6 +1348,250 @@ export default function ArticleSummaryPage() {
           </div>
         )}
         
+        {/* Sample Size - Only show if present */}
+        {cohortSize > 0 && (
+          <div>
+            <h4 className="text-gray-700 font-medium mb-2">Sample Size</h4>
+            <div className="flex items-center gap-4">
+              <div className="bg-blue-100 text-blue-800 px-4 py-2 rounded-md">
+                <span className="text-xl font-semibold">{cohortSize.toLocaleString()}</span>
+                <span className="text-sm ml-2">participants</span>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Gender Distribution - Only show if we have gender data */}
+        {hasGenderData && (
+          <div>
+            <h4 className="text-gray-700 font-medium mb-2">Gender</h4>
+            <div className="flex flex-col space-y-2">
+              {/* Horizontal gender bar */}
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-8 rounded-md overflow-hidden flex">
+                  {genderData.map((gender, index) => (
+                    <div 
+                      key={`gender-bar-${index}`}
+                      className={`h-full flex items-center justify-center text-white font-medium ${
+                        gender.name === 'Male' ? 'bg-blue-500' : 
+                        gender.name === 'Female' ? 'bg-pink-500' : 
+                        'bg-purple-500'
+                      }`}
+                      style={{ width: `${gender.value}%` }}
+                    >
+                      {gender.value > 15 && (
+                        <span>{gender.value}% {gender.name}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+              {/* Small legend for the gender bar if text doesn't fit in bars */}
+              {genderData.some(gender => gender.value <= 15) && (
+                <div className="flex gap-4 text-sm">
+                  {genderData.filter(gender => gender.value <= 15).map((gender, index) => (
+                    <div key={`gender-legend-${index}`} className="flex items-center">
+                      <div className={`w-3 h-3 rounded-sm mr-1 ${
+                        gender.name === 'Male' ? 'bg-blue-500' : 
+                        gender.name === 'Female' ? 'bg-pink-500' : 
+                        'bg-purple-500'
+                      }`}></div>
+                      <span>{gender.name}: {gender.value}%</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        
+        {/* Study Duration - Only show if present and we have calculated months */}
+        {duration && durationMonths > 0 && (
+          <div>
+            <h4 className="text-gray-700 font-medium mb-2">Study Duration</h4>
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <div className="w-full bg-gray-200 rounded-full h-2 mb-1">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full" 
+                    style={{ width: `${durationPercentage}%` }}
+                  ></div>
+                </div>
+              </div>
+              <div className="whitespace-nowrap text-sm font-medium">
+                {duration}
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Age Distribution - Show chart only if we have multiple age ranges */}
+        {((hasAgeData && cohortStratification.ageRanges.length > 1) || (ageRangesData.length > 1)) && (
+          <div>
+            <h4 className="text-gray-700 font-medium mb-2">Age Distribution</h4>
+            <div className="h-52">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={ageRangesData.length > 0 ? ageRangesData : cohortStratification.ageRanges}
+                  margin={{ top: 10, right: 20, left: 20, bottom: 50 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="range" 
+                    angle={-45}
+                    textAnchor="end"
+                    height={60}
+                    tick={{fontSize: 12}}
+                    tickFormatter={(value) => {
+                      // Ensure all age ranges are properly displayed
+                      if (value === "18-2") return "18-24";
+                      if (value === "25-3") return "25-34";
+                      if (value === "35-4") return "35-49";
+                      if (value === "50-6") return "50-64";
+                      return value;
+                    }}
+                  />
+                  <YAxis 
+                    label={{ value: 'Participants', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }} 
+                    tickFormatter={(value) => `${value}`} 
+                  />
+                  <Tooltip 
+                    formatter={(value: any, name: string, props: any) => {
+                      const item = props.payload;
+                      return [
+                        `${item.count || value} participants (${item.percentage || value}%)`,
+                        'Distribution'
+                      ];
+                    }} 
+                  />
+                  <Bar 
+                    dataKey="count" 
+                    name="Participants" 
+                    fill="#3b82f6" 
+                    radius={[4, 4, 0, 0]}
+                  >
+                    {ageRangesData.length > 0 
+                      ? ageRangesData.map((entry: { range: string, percentage: number, count: number }, index: number) => (
+                          <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                        ))
+                      : cohortStratification.ageRanges.map((entry: { range: string, percentage: number }, index: number) => (
+                          <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                        ))
+                    }
+                    {ageRangesData.length > 0 && ageRangesData.map((entry: { count: number }, index: number) => (
+                      <LabelList 
+                        key={`label-${index}`}
+                        dataKey="count" 
+                        position="top"
+                        formatter={(value: any) => `${value}`}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+        
+        {/* Display a simplified view for a single age range */}
+        {hasOnlyOneAgeRange && (
+          <div>
+            <h4 className="text-gray-700 font-medium mb-2">Age Distribution</h4>
+            <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
+              <div className="flex items-center">
+                <div className="text-blue-500 mr-3">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm text-blue-800 font-medium">
+                    {cohortStratification.ageRanges[0].range}: {cohortStratification.ageRanges[0].percentage}% of participants
+                  </p>
+                  {cohortSize > 0 && (
+                    <p className="text-xs text-blue-600">
+                      Approximately {Math.round((cohortStratification.ageRanges[0].percentage / 100) * cohortSize)} out of {cohortSize} total participants
+                    </p>
+                  )}
+                </div>
+                {cohortSize > 0 && (
+                  <div className="ml-4 flex-shrink-0">
+                    <div 
+                      className="rounded-full px-3 py-1 text-sm font-medium" 
+                      style={{ 
+                        backgroundColor: CHART_COLORS[0],
+                        color: 'white'
+                      }}
+                    >
+                      {Math.round((cohortStratification.ageRanges[0].percentage / 100) * cohortSize)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Display age-related notes if available but no structured data */}
+        {!hasAgeData && ageTextNotes.length > 0 && (
+          <div>
+            <h4 className="text-gray-700 font-medium mb-2">Age Distribution</h4>
+            <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
+              <div className="flex items-start space-x-3">
+                <div className="text-blue-500 mt-0.5 flex-shrink-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  {ageTextNotes.map((note: string, index: number) => (
+                    <p key={`age-note-${index}`} className={`text-sm ${index === 0 ? 'font-medium text-blue-800' : 'text-blue-700'} ${index !== ageTextNotes.length - 1 ? 'mb-2' : ''}`}>
+                      {note}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Display a message when no age data is available */}
+        {!hasAgeData && ageTextNotes.length === 0 && studyType && (
+          <div>
+            <h4 className="text-gray-700 font-medium mb-2">Age Distribution</h4>
+            <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
+              <div className="flex items-center text-gray-500">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p className="text-sm">
+                  No age distribution data was provided in this study
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Geographic Distribution - Only show if we have geo data */}
+        {hasGeoData && (
+          <div>
+            <h4 className="text-gray-700 font-medium mb-2">Geographic Distribution</h4>
+            <div className="flex flex-wrap gap-2">
+              {cohortStratification.demographics.map((region: { region: string, percentage: number }, index: number) => (
+                <Badge 
+                  key={`region-${index}`}
+                  className="py-1.5 px-3 text-white font-medium"
+                  style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+                >
+                  {region.region}: {region.percentage}%
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {/* Date Range - Only show if present */}
         {dateRange && (
           <div>
             <h4 className="text-gray-700 font-medium mb-1">Date Range</h4>
@@ -951,20 +1599,7 @@ export default function ArticleSummaryPage() {
           </div>
         )}
         
-        {cohortSize > 0 && (
-          <div>
-            <h4 className="text-gray-700 font-medium mb-1">Cohort Size</h4>
-            <p>{cohortSize} participants</p>
-          </div>
-        )}
-        
-        {duration && (
-          <div>
-            <h4 className="text-gray-700 font-medium mb-1">Study Duration</h4>
-            <p>{duration}</p>
-          </div>
-        )}
-        
+        {/* Notes - Only show if present */}
         {notes && notes.length > 0 && (
           <div>
             <h4 className="text-gray-700 font-medium mb-1">Notes</h4>
