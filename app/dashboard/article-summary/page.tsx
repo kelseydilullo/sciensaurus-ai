@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,36 @@ export default function ArticleSummaryPage() {
   const [articleSource, setArticleSource] = useState("");
   const [publishDate, setPublishDate] = useState("");
   const [activeGenderIndex, setActiveGenderIndex] = useState<number | undefined>(undefined);
+  
+  // Add state for storing related research results
+  const [relatedResearch, setRelatedResearch] = useState<{
+    supporting: Array<{title: string, url: string, abstract?: string, finding?: string}>;
+    contradictory: Array<{title: string, url: string, abstract?: string, finding?: string}>;
+    totalFound?: number;
+    error?: string;
+    searchKeywords?: string[];
+  }>({
+    supporting: [],
+    contradictory: [],
+    totalFound: 0
+  });
+  
+  // Loading state indicators moved to component level
+  const [loadingSteps, setLoadingSteps] = useState({
+    gettingContent: { status: 'loading' as 'loading' | 'done' | 'error' | 'waiting', done: false },
+    alternativeSource: { status: 'waiting' as 'loading' | 'done' | 'error' | 'waiting', done: false, hidden: true },
+    summarizing: { status: 'waiting' as 'loading' | 'done' | 'error' | 'waiting', done: false },
+    generating: { status: 'waiting' as 'loading' | 'done' | 'error' | 'waiting', done: false },
+    searchingSimilar: { status: 'waiting' as 'loading' | 'done' | 'error' | 'waiting', done: false }
+  });
+
+  // Helper function to update loading step status
+  const updateLoadingStep = useCallback((step: string, status: 'loading' | 'done' | 'error' | 'waiting', done: boolean = false, hidden: boolean = false) => {
+    setLoadingSteps(prev => ({
+      ...prev,
+      [step]: { ...prev[step as keyof typeof prev], status, done, hidden }
+    }));
+  }, []);
 
   useEffect(() => {
     console.log("ArticleSummaryPage rendered with cache key:", cacheInvalidator);
@@ -58,7 +88,26 @@ export default function ArticleSummaryPage() {
 
   const fetchSummary = async (articleUrl: string) => {
     setIsLoading(true);
+    setResult(null);
+    setStreamedText('');
     setError(null);
+    
+    // Reset loading steps
+    setLoadingSteps({
+      gettingContent: { status: 'loading', done: false },
+      alternativeSource: { status: 'waiting', done: false, hidden: true },
+      summarizing: { status: 'waiting', done: false },
+      generating: { status: 'waiting', done: false },
+      searchingSimilar: { status: 'waiting', done: false }
+    });
+    
+    // Reset related research
+    setRelatedResearch({
+      supporting: [],
+      contradictory: [],
+      totalFound: 0,
+      searchKeywords: []
+    });
     
     try {
       // Set a default fallback title
@@ -132,7 +181,8 @@ export default function ArticleSummaryPage() {
           'nih.gov': 'NIH',
           'cdc.gov': 'CDC',
           'biorxiv.org': 'bioRxiv',
-          'medrxiv.org': 'medRxiv'
+          'medrxiv.org': 'medRxiv',
+          'jamanetwork.com': 'JAMA Network'
         };
         
         // Check if the domain or a part of it matches our known sources
@@ -148,319 +198,476 @@ export default function ArticleSummaryPage() {
           setArticleSource(sourceName.charAt(0).toUpperCase() + sourceName.slice(1));
         }
         
-        // Set a placeholder publish date (actual date would come from article metadata)
-        const today = new Date();
-        setPublishDate(`${today.toLocaleString('default', { month: 'long' })} ${today.getDate()}, ${today.getFullYear()}`);
-      } catch (e) {
-        // Ignore URL parsing errors
-      }
+        // Try to extract publication date from URL if possible
+        try {
+          const parsedUrl = new URL(articleUrl);
+          const pathParts = parsedUrl.pathname.split('/');
+          
+          // Look for year patterns in the URL path
+          const yearPattern = /20\d{2}/;
+          const yearPart = pathParts.find(part => yearPattern.test(part));
+          
+          // Set a placeholder publish date (actual date would come from article metadata)
+          const today = new Date();
+          setPublishDate(`${today.toLocaleString('default', { month: 'long' })} ${today.getDate()}, ${today.getFullYear()}`);
+        } catch (e) {
+          // Ignore URL parsing errors
+        }
 
-      // Make the API request
-      const response = await fetch('/api/summarize-article', {
+        // Step 1: Getting article content
+        updateLoadingStep('gettingContent', 'loading');
+        
+        // Make the API request
+        console.log(`Sending request to summarize article: ${articleUrl}`);
+        const response = await fetch('/api/summarize-article', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ 
+            url: articleUrl,
+            extractOriginalTitle: true,  // Add this flag to indicate we want the original title
+            fetchMetadata: true,         // Add this flag to indicate we want to fetch title/metadata server-side
+            findAlternativeSources: true // Add this flag to enable alternative source finding
+          }),
+        });
+
+        // Step 1 completed
+        updateLoadingStep('gettingContent', 'done', true);
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          const errorMessage = errorData.error || 'Failed to summarize article';
+          console.error(`Article summarization error: ${errorMessage}`, errorData);
+          
+          // Provide more helpful error messages to the user
+          if (errorMessage.includes('paywall') || errorMessage.includes('access')) {
+            setError(`This article appears to be behind a paywall or requires access rights. Error: ${errorMessage}`);
+          } else if (errorMessage.includes('JAMA')) {
+            setError(`There was an issue accessing this JAMA article. JAMA articles often have access restrictions. Error: ${errorMessage}`);
+          } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
+            if (articleUrl.includes('pubs.geoscienceworld.org')) {
+              setError(`Unable to access this Geoscience World article. Geoscience World articles typically require institutional access or subscription. Try logging in through your institution or accessing this paper through Google Scholar.`);
+            } else {
+              setError(`This article cannot be accessed (403 Forbidden). The publisher likely has access restrictions or a paywall in place. Try logging in through your institution or accessing a public version through Google Scholar.`);
+            }
+          } else {
+            setError(errorMessage);
+          }
+          
+          setIsLoading(false);
+          throw new Error(errorMessage);
+        }
+
+        // Check if response is JSON or plain text
+        const contentType = response.headers.get('Content-Type') || '';
+        
+        if (contentType.includes('text/plain')) {
+          // Handle streaming text response
+          const reader = response.body?.getReader();
+          const decoder = new TextDecoder();
+          
+          if (!reader) {
+            throw new Error('Failed to get response reader');
+          }
+
+          let done = false;
+          let accumulatedText = "";
+          
+          // Step 2: Show retrieving summary
+          updateLoadingStep('summarizing', 'loading');
+
+          // Check if the first chunk contains info about using an alternative source
+          let firstChunk = true;
+          let usingAlternativeSource = false;
+
+          while (!done) {
+            const { value, done: doneReading } = await reader.read();
+            done = doneReading;
+            
+            if (value) {
+              const chunkText = decoder.decode(value);
+              accumulatedText += chunkText;
+              
+              // Check the first chunk for alternative source notification
+              if (firstChunk) {
+                firstChunk = false;
+                
+                if (accumulatedText.includes('### Alternative Source Used:')) {
+                  usingAlternativeSource = true;
+                  
+                  // Show the alternative source step and mark it as done
+                  updateLoadingStep('alternativeSource', 'done', true, false);
+                  
+                  // Try to extract the alternative URL
+                  const alternativeSourceMatch = accumulatedText.match(/### Alternative Source Used: (https?:\/\/[^\s\n]+)/);
+                  if (alternativeSourceMatch && alternativeSourceMatch[1]) {
+                    console.log(`Using alternative source: ${alternativeSourceMatch[1]}`);
+                    // Could display this information to the user if desired
+                  }
+                }
+              }
+              
+              // Mark summarizing as done once we see the summarized title section
+              if (accumulatedText.includes('### Summarized Title:') && loadingSteps.summarizing.status !== 'done') {
+                updateLoadingStep('summarizing', 'done', true);
+                updateLoadingStep('generating', 'loading');
+              }
+              
+              // Check if keywords section is present to mark generating as done
+              if (accumulatedText.includes('### Keywords:') && loadingSteps.generating.status !== 'done') {
+                updateLoadingStep('generating', 'done', true);
+              }
+              
+              setStreamedText(accumulatedText);
+            }
+          }
+          
+          // Mark all steps as done when completed
+          Object.keys(loadingSteps).forEach(step => {
+            updateLoadingStep(step as keyof typeof loadingSteps, 'done', true);
+          });
+          
+          // Try to parse the text response into a structured format to prepare for title extraction
+          const parsedResult = parseTextResponse(accumulatedText);
+          if (parsedResult) {
+            setResult(parsedResult);
+            
+            const aiGeneratedTitle = parsedResult.title || "";
+            
+            // Start searching for related research if we have keywords
+            if (parsedResult.keywords && parsedResult.keywords.length > 0) {
+              // Search for related articles based on keywords
+              fetchRelatedResearch(parsedResult.keywords);
+            }
+            
+            // Extract the article title with various patterns
+            try {
+              // Check for common scientific article title patterns
+              const scientificTitlePatterns = [
+                // Look for explicit article title patterns common in scientific literature
+                /Article Title:\s*(.*?)(?=\n|$)/i,
+                /Research Title:\s*(.*?)(?=\n|$)/i,
+                /Paper Title:\s*(.*?)(?=\n|$)/i,
+                /Scientific Title:\s*(.*?)(?=\n|$)/i,
+                /Manuscript Title:\s*(.*?)(?=\n|$)/i,
+                /Publication Title:\s*(.*?)(?=\n|$)/i
+              ];
+              
+              let extractedTitle = null;
+              
+              // Check for scientific article titles first (most reliable for scientific content)
+              for (const pattern of scientificTitlePatterns) {
+                const match = accumulatedText.match(pattern);
+                if (match && match[1]) {
+                  const potentialTitle = match[1].trim();
+                  if (potentialTitle.length > 5 && 
+                      potentialTitle.length < 200 && 
+                      potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
+                    extractedTitle = potentialTitle;
+                    break;
+                  }
+                }
+              }
+              
+              // If no scientific title found, check for explicit original title markers
+              if (!extractedTitle) {
+                const originalTitlePatterns = [
+                  /Original Title:\s*(.*?)(?=\n|$)/i,
+                  /Original Article Title:\s*(.*?)(?=\n|$)/i,
+                  /Article Original Title:\s*(.*?)(?=\n|$)/i,
+                  /Source Article Title:\s*(.*?)(?=\n|$)/i
+                ];
+                
+                for (const pattern of originalTitlePatterns) {
+                  const match = accumulatedText.match(pattern);
+                  if (match && match[1]) {
+                    const potentialTitle = match[1].trim();
+                    if (potentialTitle.length > 5 && 
+                        potentialTitle.length < 200 && 
+                        potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
+                      extractedTitle = potentialTitle;
+                      break;
+                    }
+                  }
+                }
+              }
+              
+              // If no explicit original title found, try generic title patterns
+              if (!extractedTitle) {
+                const genericTitlePatterns = [
+                  /Title of the article:\s*(.*?)(?=\n|$)/i,
+                  /Article title:\s*(.*?)(?=\n|$)/i,
+                  /Title:\s*(.*?)(?=\n|$)/i
+                ];
+                
+                for (const pattern of genericTitlePatterns) {
+                  const match = accumulatedText.match(pattern);
+                  if (match && match[1]) {
+                    const potentialTitle = match[1].trim();
+                    if (potentialTitle.length > 5 && 
+                        potentialTitle.length < 200 && 
+                        potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
+                      extractedTitle = potentialTitle;
+                      break;
+                    }
+                  }
+                }
+              }
+              
+              // For scientific articles, look for patterns like "Authors et al. Title..."
+              if (!extractedTitle) {
+                // Match patterns like: "Smith et al. The effects of..." or "Smith J, et al. The effects of..."
+                const authorTitlePattern = /([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)(?:\s[A-Z](?:\s|,))?\set\sal\.\s+([^.]+)/;
+                const match = accumulatedText.match(authorTitlePattern);
+                if (match && match[2]) {
+                  const potentialTitle = match[2].trim();
+                  if (potentialTitle.length > 15 && 
+                      potentialTitle.length < 200 && 
+                      potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
+                    extractedTitle = potentialTitle;
+                  }
+                }
+              }
+              
+              // If still no title found, look for the first long line that could be a title
+              if (!extractedTitle) {
+                const lines = accumulatedText.split('\n')
+                  .map(line => line.trim())
+                  .filter(line => 
+                    line.length > 15 && line.length < 200 &&  // Reasonable title length
+                    !line.startsWith('#') && 
+                    !line.startsWith('-') && 
+                    !line.startsWith('•') &&
+                    !line.includes(':') &&  // Avoid lines with colons which often indicate section headers
+                    !line.includes('Keywords') &&
+                    !line.includes('Summary') &&
+                    !line.includes('Visual') &&
+                    !line.includes('Cohort') &&
+                    !line.includes('Analysis')
+                  );
+                
+                // Take the first line that's different from the AI title
+                for (const line of lines) {
+                  if (line.toLowerCase().trim() !== aiGeneratedTitle.toLowerCase().trim()) {
+                    extractedTitle = line;
+                    break;
+                  }
+                }
+              }
+              
+              // Special handling for PubMed/NCBI articles - look for title in specific format
+              if (articleUrl.includes('ncbi.nlm.nih.gov') && !extractedTitle) {
+                // Look for title in first few lines that ends with a year or DOI
+                const pmcTitlePattern = /^((?:(?!DOI|doi|\d{4}).)+)(?:\.\s+\d{4}|\.\s+doi:)/m;
+                const match = accumulatedText.match(pmcTitlePattern);
+                if (match && match[1]) {
+                  const potentialTitle = match[1].trim();
+                  if (potentialTitle.length > 15 && 
+                      potentialTitle.length < 200 && 
+                      potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
+                    extractedTitle = potentialTitle;
+                  }
+                }
+                
+                // Try to find a title that is followed by author names
+                if (!extractedTitle) {
+                  const titleAuthorPattern = /^([^.]+)(?:\.\s+(?:By\s+)?[A-Z][a-z]+\s+(?:[A-Z]\.?\s+)?[A-Z][a-z]+)/m;
+                  const match = accumulatedText.match(titleAuthorPattern);
+                  if (match && match[1]) {
+                    const potentialTitle = match[1].trim();
+                    if (potentialTitle.length > 15 && 
+                        potentialTitle.length < 200 && 
+                        potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase() &&
+                        !potentialTitle.includes('Keywords') &&
+                        !potentialTitle.includes('Abstract')) {
+                      extractedTitle = potentialTitle;
+                    }
+                  }
+                }
+                
+                // Last attempt - look for a title in "Acta Orthop. YYYY..." format
+                if (!extractedTitle) {
+                  const journalTitlePattern = /^([^.]+)(?:\.\s+[A-Za-z\s]+\.\s+\d{4})/m;
+                  const match = accumulatedText.match(journalTitlePattern);
+                  if (match && match[1]) {
+                    const potentialTitle = match[1].trim();
+                    if (potentialTitle.length > 15 && 
+                        potentialTitle.length < 200 && 
+                        potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
+                      extractedTitle = potentialTitle;
+                    }
+                  }
+                }
+              }
+              
+              // If we found a good title that's different from the AI title, use it
+              if (extractedTitle && 
+                  extractedTitle.toLowerCase().trim() !== aiGeneratedTitle.toLowerCase().trim() &&
+                  // Ensure it's not a comma-separated list (keywords)
+                  extractedTitle.split(',').length < 3) {
+                setArticleTitle(extractedTitle);
+              } else if (articleUrl.includes('pmc.ncbi.nlm.nih.gov/articles/PMC')) {
+                // For PMC articles, check if we've extracted a real title (not just an ID) in fallbackTitle
+                if (!fallbackTitle.startsWith('PMC Article') && !fallbackTitle.startsWith('Article from')) {
+                  setArticleTitle(fallbackTitle);
+                } else {
+                  // For PMC articles, create a map of known article IDs to titles
+                  const pmcTitles: Record<string, string> = {
+                    "PMC5389428": "Ageing in the musculoskeletal system",
+                    "PMC10359191": "Intervertebral disc degeneration—Current therapeutic options and challenges",
+                    "PMC11189324": "Occurrence and sources of hormones in water resources—environmental and health impact"
+                  };
+                  
+                  // Extract the PMC ID from the URL
+                  const pmcIdMatch = articleUrl.match(/PMC(\d+)/i);
+                  if (pmcIdMatch && pmcIdMatch[1] && pmcTitles[`PMC${pmcIdMatch[1]}`]) {
+                    setArticleTitle(pmcTitles[`PMC${pmcIdMatch[1]}`]);
+                  } else {
+                    // Keep using the fallback title from URL
+                    console.log("Using fallback title from URL for PMC article");
+                  }
+                }
+              } else {
+                // Keep using the fallback title from URL
+                console.log("Using fallback title from URL");
+              }
+            } catch (e) {
+              console.error("Error extracting article title:", e);
+              // Keep using the fallback title set earlier
+            }
+          } else {
+            // If parsing fails, keep using fallback title
+            setStreamedText(accumulatedText);
+          }
+        } else {
+          // Handle JSON response
+          const data = await response.json();
+          setResult(data);
+          
+          const aiGeneratedTitle = data.title || "";
+          
+          // Extract article title from JSON response if it exists and is different from AI title
+          if (data.articleTitle && 
+              data.articleTitle.toLowerCase().trim() !== aiGeneratedTitle.toLowerCase().trim()) {
+            setArticleTitle(data.articleTitle);
+          } else if (data.originalTitle && 
+                    data.originalTitle.toLowerCase().trim() !== aiGeneratedTitle.toLowerCase().trim()) {
+            setArticleTitle(data.originalTitle);
+          } else if (articleUrl.includes('pmc.ncbi.nlm.nih.gov/articles/PMC')) {
+            // For PMC articles, check if we've extracted a real title (not just an ID) in fallbackTitle
+            if (!fallbackTitle.startsWith('PMC Article') && !fallbackTitle.startsWith('Article from')) {
+              setArticleTitle(fallbackTitle);
+            } else {
+              // For PMC articles, create a map of known article IDs to titles
+              const pmcTitles: Record<string, string> = {
+                "PMC5389428": "Ageing in the musculoskeletal system",
+                "PMC10359191": "Intervertebral disc degeneration—Current therapeutic options and challenges",
+                "PMC11189324": "Occurrence and sources of hormones in water resources—environmental and health impact"
+              };
+              
+              // Extract the PMC ID from the URL
+              const pmcIdMatch = articleUrl.match(/PMC(\d+)/i);
+              if (pmcIdMatch && pmcIdMatch[1] && pmcTitles[`PMC${pmcIdMatch[1]}`]) {
+                setArticleTitle(pmcTitles[`PMC${pmcIdMatch[1]}`]);
+              } else {
+                // Keep using the fallback title set earlier
+                console.log("Using fallback title - no distinct title in API response for PMC article");
+              }
+            }
+          } else {
+            // Keep using the fallback title set earlier
+            console.log("Using fallback title - no distinct title in API response");
+          }
+          
+          // Extract publication source and date if available
+          if (data.source) {
+            setArticleSource(data.source);
+          }
+          
+          if (data.publishDate) {
+            setPublishDate(data.publishDate);
+          }
+        }
+      } catch (error) {
+        console.error("Error:", error);
+        setError(error instanceof Error ? error.message : 'An unexpected error occurred');
+      } finally {
+        setIsLoading(false);
+      }
+    } catch (e) {
+      // Handle errors from second try block
+      console.error("URL processing error:", e);
+      setError(e instanceof Error ? e.message : 'Failed to process the article URL');
+      setIsLoading(false);
+    }
+  };
+
+  // Add a function to fetch related research
+  const fetchRelatedResearch = useCallback(async (keywords: string[]) => {
+    if (!keywords || keywords.length === 0) {
+      return;
+    }
+    
+    try {
+      // Update loading step with keywords
+      updateLoadingStep('searchingSimilar', 'loading');
+      
+      // Store the keywords being used for the loading message
+      setRelatedResearch(prev => ({
+        ...prev,
+        searchKeywords: keywords
+      }));
+      
+      const response = await fetch('/api/semantic-scholar-search', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ 
-          url: articleUrl,
-          extractOriginalTitle: true,  // Add this flag to indicate we want the original title
-          fetchMetadata: true          // Add this flag to indicate we want to fetch title/metadata server-side
+        body: JSON.stringify({
+          keywords,
+          url,
+          articleTitle
         }),
       });
       
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to summarize article');
+        updateLoadingStep('searchingSimilar', 'error');
+        console.error("Error fetching related research:", errorData);
+        setRelatedResearch({
+          supporting: [],
+          contradictory: [],
+          searchKeywords: keywords,
+          error: errorData.error || "Failed to fetch related research"
+        });
+        return;
       }
-
-      // Check if response is JSON or plain text
-      const contentType = response.headers.get('Content-Type') || '';
       
-      if (contentType.includes('text/plain')) {
-        // Handle streaming text response
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-        
-        if (!reader) {
-          throw new Error('Failed to get response reader');
-        }
-
-        let done = false;
-        let accumulatedText = "";
-
-        while (!done) {
-          const { value, done: doneReading } = await reader.read();
-          done = doneReading;
-          
-          if (value) {
-            const chunkText = decoder.decode(value);
-            accumulatedText += chunkText;
-            setStreamedText(accumulatedText);
-          }
-        }
-        
-        // Try to parse the text response into a structured format to prepare for title extraction
-        const parsedResult = parseTextResponse(accumulatedText);
-        if (parsedResult) {
-          setResult(parsedResult);
-          
-          const aiGeneratedTitle = parsedResult.title || "";
-          
-          // Extract the article title with various patterns
-          try {
-            // Check for common scientific article title patterns
-            const scientificTitlePatterns = [
-              // Look for explicit article title patterns common in scientific literature
-              /Article Title:\s*(.*?)(?=\n|$)/i,
-              /Research Title:\s*(.*?)(?=\n|$)/i,
-              /Paper Title:\s*(.*?)(?=\n|$)/i,
-              /Scientific Title:\s*(.*?)(?=\n|$)/i,
-              /Manuscript Title:\s*(.*?)(?=\n|$)/i,
-              /Publication Title:\s*(.*?)(?=\n|$)/i
-            ];
-            
-            let extractedTitle = null;
-            
-            // Check for scientific article titles first (most reliable for scientific content)
-            for (const pattern of scientificTitlePatterns) {
-              const match = accumulatedText.match(pattern);
-              if (match && match[1]) {
-                const potentialTitle = match[1].trim();
-                if (potentialTitle.length > 5 && 
-                    potentialTitle.length < 200 && 
-                    potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
-                  extractedTitle = potentialTitle;
-                  break;
-                }
-              }
-            }
-            
-            // If no scientific title found, check for explicit original title markers
-            if (!extractedTitle) {
-              const originalTitlePatterns = [
-                /Original Title:\s*(.*?)(?=\n|$)/i,
-                /Original Article Title:\s*(.*?)(?=\n|$)/i,
-                /Article Original Title:\s*(.*?)(?=\n|$)/i,
-                /Source Article Title:\s*(.*?)(?=\n|$)/i
-              ];
-              
-              for (const pattern of originalTitlePatterns) {
-                const match = accumulatedText.match(pattern);
-                if (match && match[1]) {
-                  const potentialTitle = match[1].trim();
-                  if (potentialTitle.length > 5 && 
-                      potentialTitle.length < 200 && 
-                      potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
-                    extractedTitle = potentialTitle;
-                    break;
-                  }
-                }
-              }
-            }
-            
-            // If no explicit original title found, try generic title patterns
-            if (!extractedTitle) {
-              const genericTitlePatterns = [
-                /Title of the article:\s*(.*?)(?=\n|$)/i,
-                /Article title:\s*(.*?)(?=\n|$)/i,
-                /Title:\s*(.*?)(?=\n|$)/i
-              ];
-              
-              for (const pattern of genericTitlePatterns) {
-                const match = accumulatedText.match(pattern);
-                if (match && match[1]) {
-                  const potentialTitle = match[1].trim();
-                  if (potentialTitle.length > 5 && 
-                      potentialTitle.length < 200 && 
-                      potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
-                    extractedTitle = potentialTitle;
-                    break;
-                  }
-                }
-              }
-            }
-            
-            // For scientific articles, look for patterns like "Authors et al. Title..."
-            if (!extractedTitle) {
-              // Match patterns like: "Smith et al. The effects of..." or "Smith J, et al. The effects of..."
-              const authorTitlePattern = /([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)(?:\s[A-Z](?:\s|,))?\set\sal\.\s+([^.]+)/;
-              const match = accumulatedText.match(authorTitlePattern);
-              if (match && match[2]) {
-                const potentialTitle = match[2].trim();
-                if (potentialTitle.length > 15 && 
-                    potentialTitle.length < 200 && 
-                    potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
-                  extractedTitle = potentialTitle;
-                }
-              }
-            }
-            
-            // If still no title found, look for the first long line that could be a title
-            if (!extractedTitle) {
-              const lines = accumulatedText.split('\n')
-                .map(line => line.trim())
-                .filter(line => 
-                  line.length > 15 && line.length < 200 &&  // Reasonable title length
-                  !line.startsWith('#') && 
-                  !line.startsWith('-') && 
-                  !line.startsWith('•') &&
-                  !line.includes(':') &&  // Avoid lines with colons which often indicate section headers
-                  !line.includes('Keywords') &&
-                  !line.includes('Summary') &&
-                  !line.includes('Visual') &&
-                  !line.includes('Cohort') &&
-                  !line.includes('Analysis')
-                );
-              
-              // Take the first line that's different from the AI title
-              for (const line of lines) {
-                if (line.toLowerCase().trim() !== aiGeneratedTitle.toLowerCase().trim()) {
-                  extractedTitle = line;
-                  break;
-                }
-              }
-            }
-            
-            // Special handling for PubMed/NCBI articles - look for title in specific format
-            if (articleUrl.includes('ncbi.nlm.nih.gov') && !extractedTitle) {
-              // Look for title in first few lines that ends with a year or DOI
-              const pmcTitlePattern = /^((?:(?!DOI|doi|\d{4}).)+)(?:\.\s+\d{4}|\.\s+doi:)/m;
-              const match = accumulatedText.match(pmcTitlePattern);
-              if (match && match[1]) {
-                const potentialTitle = match[1].trim();
-                if (potentialTitle.length > 15 && 
-                    potentialTitle.length < 200 && 
-                    potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
-                  extractedTitle = potentialTitle;
-                }
-              }
-              
-              // Try to find a title that is followed by author names
-              if (!extractedTitle) {
-                const titleAuthorPattern = /^([^.]+)(?:\.\s+(?:By\s+)?[A-Z][a-z]+\s+(?:[A-Z]\.?\s+)?[A-Z][a-z]+)/m;
-                const match = accumulatedText.match(titleAuthorPattern);
-                if (match && match[1]) {
-                  const potentialTitle = match[1].trim();
-                  if (potentialTitle.length > 15 && 
-                      potentialTitle.length < 200 && 
-                      potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase() &&
-                      !potentialTitle.includes('Keywords') &&
-                      !potentialTitle.includes('Abstract')) {
-                    extractedTitle = potentialTitle;
-                  }
-                }
-              }
-              
-              // Last attempt - look for a title in "Acta Orthop. YYYY..." format
-              if (!extractedTitle) {
-                const journalTitlePattern = /^([^.]+)(?:\.\s+[A-Za-z\s]+\.\s+\d{4})/m;
-                const match = accumulatedText.match(journalTitlePattern);
-                if (match && match[1]) {
-                  const potentialTitle = match[1].trim();
-                  if (potentialTitle.length > 15 && 
-                      potentialTitle.length < 200 && 
-                      potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
-                    extractedTitle = potentialTitle;
-                  }
-                }
-              }
-            }
-            
-            // If we found a good title that's different from the AI title, use it
-            if (extractedTitle && 
-                extractedTitle.toLowerCase().trim() !== aiGeneratedTitle.toLowerCase().trim() &&
-                // Ensure it's not a comma-separated list (keywords)
-                extractedTitle.split(',').length < 3) {
-              setArticleTitle(extractedTitle);
-            } else if (articleUrl.includes('pmc.ncbi.nlm.nih.gov/articles/PMC')) {
-              // For PMC articles, check if we've extracted a real title (not just an ID) in fallbackTitle
-              if (!fallbackTitle.startsWith('PMC Article') && !fallbackTitle.startsWith('Article from')) {
-                setArticleTitle(fallbackTitle);
-              } else {
-                // For PMC articles, create a map of known article IDs to titles
-                const pmcTitles: Record<string, string> = {
-                  "PMC5389428": "Ageing in the musculoskeletal system",
-                  "PMC10359191": "Intervertebral disc degeneration—Current therapeutic options and challenges",
-                  "PMC11189324": "Occurrence and sources of hormones in water resources—environmental and health impact"
-                };
-                
-                // Extract the PMC ID from the URL
-                const pmcIdMatch = articleUrl.match(/PMC(\d+)/i);
-                if (pmcIdMatch && pmcIdMatch[1] && pmcTitles[`PMC${pmcIdMatch[1]}`]) {
-                  setArticleTitle(pmcTitles[`PMC${pmcIdMatch[1]}`]);
-                } else {
-                  // Keep using the fallback title from URL
-                  console.log("Using fallback title from URL for PMC article");
-                }
-              }
-            } else {
-              // Keep using the fallback title from URL
-              console.log("Using fallback title from URL");
-            }
-          } catch (e) {
-            console.error("Error extracting article title:", e);
-            // Keep using the fallback title set earlier
-          }
-        } else {
-          // If parsing fails, keep using fallback title
-          setStreamedText(accumulatedText);
-        }
-      } else {
-        // Handle JSON response
-        const data = await response.json();
-        setResult(data);
-        
-        const aiGeneratedTitle = data.title || "";
-        
-        // Extract article title from JSON response if it exists and is different from AI title
-        if (data.articleTitle && 
-            data.articleTitle.toLowerCase().trim() !== aiGeneratedTitle.toLowerCase().trim()) {
-          setArticleTitle(data.articleTitle);
-        } else if (data.originalTitle && 
-                  data.originalTitle.toLowerCase().trim() !== aiGeneratedTitle.toLowerCase().trim()) {
-          setArticleTitle(data.originalTitle);
-        } else if (articleUrl.includes('pmc.ncbi.nlm.nih.gov/articles/PMC')) {
-          // For PMC articles, check if we've extracted a real title (not just an ID) in fallbackTitle
-          if (!fallbackTitle.startsWith('PMC Article') && !fallbackTitle.startsWith('Article from')) {
-            setArticleTitle(fallbackTitle);
-          } else {
-            // For PMC articles, create a map of known article IDs to titles
-            const pmcTitles: Record<string, string> = {
-              "PMC5389428": "Ageing in the musculoskeletal system",
-              "PMC10359191": "Intervertebral disc degeneration—Current therapeutic options and challenges",
-              "PMC11189324": "Occurrence and sources of hormones in water resources—environmental and health impact"
-            };
-            
-            // Extract the PMC ID from the URL
-            const pmcIdMatch = articleUrl.match(/PMC(\d+)/i);
-            if (pmcIdMatch && pmcIdMatch[1] && pmcTitles[`PMC${pmcIdMatch[1]}`]) {
-              setArticleTitle(pmcTitles[`PMC${pmcIdMatch[1]}`]);
-            } else {
-              // Keep using the fallback title set earlier
-              console.log("Using fallback title - no distinct title in API response for PMC article");
-            }
-          }
-        } else {
-          // Keep using the fallback title set earlier
-          console.log("Using fallback title - no distinct title in API response");
-        }
-        
-        // Extract publication source and date if available
-        if (data.source) {
-          setArticleSource(data.source);
-        }
-        
-        if (data.publishDate) {
-          setPublishDate(data.publishDate);
-        }
-      }
+      const data = await response.json();
+      
+      updateLoadingStep('searchingSimilar', 'done', true);
+      
+      setRelatedResearch({
+        supporting: data.supporting || [],
+        contradictory: data.contradictory || [],
+        totalFound: data.totalFound || 0,
+        searchKeywords: keywords,
+        error: data.error
+      });
+      
+      console.log("Related research loaded:", data);
     } catch (error) {
-      console.error("Error:", error);
-      setError(error instanceof Error ? error.message : 'An unexpected error occurred');
-    } finally {
-      setIsLoading(false);
+      console.error("Error fetching related research:", error);
+      updateLoadingStep('searchingSimilar', 'error');
+      setRelatedResearch({
+        supporting: [],
+        contradictory: [],
+        searchKeywords: keywords,
+        error: error instanceof Error ? error.message : "Unknown error fetching related research"
+      });
     }
-  };
+  }, [url, articleTitle, updateLoadingStep]);
 
   // Function to parse the plain text response
   const parseTextResponse = (text: string) => {
@@ -679,6 +886,9 @@ export default function ArticleSummaryPage() {
           
           // Remove any keywords in quotes
           result.keywords = keywordsList.map(k => k.replace(/["']/g, ''));
+          
+          // Log the extracted keywords for debugging
+          console.log("Extracted keywords for research:", result.keywords);
         }
       }
       
@@ -1019,6 +1229,12 @@ export default function ArticleSummaryPage() {
           
           result.cohortAnalysis.notes = notesLines;
         }
+      }
+      
+      // Add this at the end of the successful parsing section
+      // Fetch related research using the keywords
+      if (result.keywords && result.keywords.length > 0) {
+        fetchRelatedResearch(result.keywords);
       }
       
       return result;
@@ -1614,6 +1830,100 @@ export default function ArticleSummaryPage() {
     );
   };
 
+  // Add a new function to render related research
+  const renderRelatedResearch = () => {
+    const { supporting, contradictory, error: researchError, searchKeywords } = relatedResearch;
+    
+    if (researchError) {
+      return (
+        <div className="p-4 bg-red-50 border border-red-100 rounded-md">
+          <p className="text-red-600">Error fetching related research: {researchError}</p>
+        </div>
+      );
+    }
+    
+    if (supporting.length === 0 && contradictory.length === 0) {
+      if (loadingSteps.searchingSimilar.status === 'loading') {
+        return (
+          <div className="p-6 text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-900 mx-auto mb-2"></div>
+            <p className="text-gray-600">
+              {searchKeywords && searchKeywords.length > 0 
+                ? `Retrieving similar articles using the following keywords: ${searchKeywords.join(', ')}` 
+                : 'Searching for related research...'}
+            </p>
+          </div>
+        );
+      }
+      
+      return (
+        <div className="p-4 bg-gray-50 border border-gray-100 rounded-md">
+          <p className="text-gray-600">No related research articles found.</p>
+        </div>
+      );
+    }
+    
+    return (
+      <div className="grid md:grid-cols-2 gap-8">
+        {/* Supporting Research */}
+        <div>
+          <h4 className="text-lg font-medium mb-4 flex items-center">
+            <span className="w-3 h-3 rounded-full bg-green-500 mr-2"></span>
+            Supporting Research
+          </h4>
+          <div className="space-y-4">
+            {supporting.length === 0 ? (
+              <p className="text-gray-500">No supporting research articles found.</p>
+            ) : (
+              supporting.map((article, index) => (
+                <div key={index} className="border-l-4 border-l-green-500 p-4 bg-white shadow-sm rounded-md">
+                  <h5 className="font-medium text-blue-900 mb-1">
+                    <a href={article.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                      {article.title}
+                    </a>
+                  </h5>
+                  {article.finding && (
+                    <p className="text-sm text-gray-700 my-1">
+                      <span className="text-green-600 font-medium">✓</span> {article.finding}
+                    </p>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Contradictory Research */}
+        <div>
+          <h4 className="text-lg font-medium mb-4 flex items-center">
+            <span className="w-3 h-3 rounded-full bg-red-500 mr-2"></span>
+            Contradictory Research
+          </h4>
+          <div className="space-y-4">
+            {contradictory.length === 0 ? (
+              <p className="text-gray-500">No contradictory research articles found.</p>
+            ) : (
+              contradictory.map((article, index) => (
+                <div key={index} className="border-l-4 border-l-red-500 p-4 bg-white shadow-sm rounded-md">
+                  <h5 className="font-medium text-blue-900 mb-1">
+                    <a href={article.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                      {article.title}
+                    </a>
+                  </h5>
+                  {article.finding && (
+                    <p className="text-sm text-gray-700 my-1">
+                      <span className="text-red-600 font-medium">✗</span> {article.finding}
+                    </p>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <>
       {/* Back button */}
@@ -1696,11 +2006,87 @@ export default function ArticleSummaryPage() {
         {/* Loading indicator */}
         {isLoading && (
           <div className="border border-gray-200 rounded-md overflow-hidden">
-            <div className="bg-white py-12">
-              <div className="flex flex-col items-center justify-center space-y-4">
-                <div className="w-10 h-10 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin"></div>
-                <p className="text-gray-700 text-center font-medium">Analyzing and summarizing the article...</p>
-                <p className="text-sm text-gray-500 text-center">This may take up to a minute depending on the article length</p>
+            <div className="bg-white py-8">
+              <div className="flex flex-col items-center justify-center space-y-6 px-4">
+                <div className="space-y-5 w-full max-w-md">
+                  {/* Step 1: Getting content */}
+                  <div className="flex items-center">
+                    {loadingSteps.gettingContent.status === 'loading' ? (
+                      <div className="w-6 h-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mr-3"></div>
+                    ) : loadingSteps.gettingContent.status === 'done' ? (
+                      <div className="text-green-500 mr-3">✅</div>
+                    ) : (
+                      <div className="w-6 h-6 mr-3"></div>
+                    )}
+                    <span className={`${loadingSteps.gettingContent.status === 'done' ? 'text-gray-500' : 'text-gray-700'} font-medium`}>
+                      Getting article content...
+                    </span>
+                  </div>
+                  
+                  {/* Step 2: Finding alternative source (only shown if needed) */}
+                  {!loadingSteps.alternativeSource.hidden && (
+                    <div className="flex items-center">
+                      {loadingSteps.alternativeSource.status === 'loading' ? (
+                        <div className="w-6 h-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mr-3"></div>
+                      ) : loadingSteps.alternativeSource.status === 'done' ? (
+                        <div className="text-green-500 mr-3">✅</div>
+                      ) : (
+                        <div className="w-6 h-6 mr-3"></div>
+                      )}
+                      <span className={`${loadingSteps.alternativeSource.status === 'done' ? 'text-gray-500' : 'text-gray-700'} font-medium`}>
+                        Finding alternative source for the same content...
+                      </span>
+                    </div>
+                  )}
+                  
+                  {/* Step 3: Retrieving summary */}
+                  <div className="flex items-center">
+                    {loadingSteps.summarizing.status === 'loading' ? (
+                      <div className="w-6 h-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mr-3"></div>
+                    ) : loadingSteps.summarizing.status === 'done' ? (
+                      <div className="text-green-500 mr-3">✅</div>
+                    ) : (
+                      <div className="w-6 h-6 mr-3"></div>
+                    )}
+                    <span className={`${loadingSteps.summarizing.status === 'done' ? 'text-gray-500' : 'text-gray-700'} font-medium`}>
+                      Retrieving article summary...
+                    </span>
+                  </div>
+                  
+                  {/* Step 4: Generating keywords */}
+                  <div className="flex items-center">
+                    {loadingSteps.generating.status === 'loading' ? (
+                      <div className="w-6 h-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mr-3"></div>
+                    ) : loadingSteps.generating.status === 'done' ? (
+                      <div className="text-green-500 mr-3">✅</div>
+                    ) : (
+                      <div className="w-6 h-6 mr-3"></div>
+                    )}
+                    <span className={`${loadingSteps.generating.status === 'done' ? 'text-gray-500' : 'text-gray-700'} font-medium`}>
+                      Generating relevant keywords...
+                    </span>
+                  </div>
+                  
+                  {/* Step 5: Searching for similar articles */}
+                  <div className="flex items-center">
+                    {loadingSteps.searchingSimilar.status === 'loading' ? (
+                      <div className="w-6 h-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mr-3"></div>
+                    ) : loadingSteps.searchingSimilar.status === 'done' ? (
+                      <div className="text-green-500 mr-3">✅</div>
+                    ) : (
+                      <div className="w-6 h-6 mr-3"></div>
+                    )}
+                    <span className={`${loadingSteps.searchingSimilar.status === 'done' ? 'text-gray-500' : 'text-gray-700'} font-medium`}>
+                      {relatedResearch.searchKeywords && relatedResearch.searchKeywords.length > 0 
+                        ? `Retrieving similar articles using the following keywords: ${relatedResearch.searchKeywords.join(', ')}` 
+                        : 'Searching for similar articles...'}
+                    </span>
+                  </div>
+                </div>
+                
+                <div className="text-sm text-gray-500 text-center mt-4">
+                  This may take up to a minute depending on the article length
+                </div>
               </div>
             </div>
           </div>
@@ -1714,6 +2100,19 @@ export default function ArticleSummaryPage() {
             </div>
             <div className="bg-white px-6 py-5">
               <p>{error}</p>
+              
+              {(error.includes('paywall') || error.includes('403') || error.includes('Forbidden') || error.includes('subscription') || error.includes('access')) && (
+                <div className="mt-4 bg-blue-50 p-4 rounded-md border border-blue-200">
+                  <h4 className="font-medium text-blue-700 mb-2">Suggestions to access this article:</h4>
+                  <ul className="list-disc pl-5 text-gray-700 space-y-2">
+                    <li>Try accessing through your institutional library website</li>
+                    <li>Search for an open access version on <a href={`https://scholar.google.com/scholar?q=${encodeURIComponent(articleTitle || url)}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Google Scholar</a></li>
+                    <li>Check if available on <a href={`https://www.researchgate.net/search?q=${encodeURIComponent(articleTitle || url)}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">ResearchGate</a></li>
+                    <li>Look for a preprint on <a href={`https://www.semanticscholar.org/search?q=${encodeURIComponent(articleTitle || url)}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Semantic Scholar</a></li>
+                  </ul>
+                </div>
+              )}
+              
               <div className="mt-4">
                 <Button onClick={() => router.push('/dashboard')}>
                   Return to Dashboard
@@ -1749,6 +2148,19 @@ export default function ArticleSummaryPage() {
               </div>
               <div className="bg-white px-6 py-5">
                 {renderKeywords()}
+              </div>
+            </div>
+
+            {/* Related Research */}
+            <div className="border border-gray-200 rounded-md overflow-hidden">
+              <div className="bg-white py-4 px-6">
+                <h3 className="text-lg font-medium text-blue-900">Related Research</h3>
+                <p className="text-sm text-gray-500">
+                  Articles with supporting or contradicting findings
+                </p>
+              </div>
+              <div className="bg-white px-6 py-5">
+                {renderRelatedResearch()}
               </div>
             </div>
 
