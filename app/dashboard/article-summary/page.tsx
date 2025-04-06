@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { BookmarkIcon, Share2Icon, DownloadIcon, PrinterIcon, ExternalLinkIcon, ArrowLeft } from "lucide-react";
+import { BookmarkIcon, Share2Icon, DownloadIcon, PrinterIcon, ExternalLinkIcon, ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
 import { 
   BarChart, 
   Bar, 
@@ -22,6 +22,81 @@ import {
   Sector,
   LabelList
 } from 'recharts';
+import { Input } from "@/components/ui/input";
+
+// Loading Overlay Component
+const LoadingOverlay = ({ 
+  isVisible, 
+  currentStep, 
+  completedSteps, 
+  keywords 
+}: { 
+  isVisible: boolean; 
+  currentStep: string; 
+  completedSteps: string[];
+  keywords?: string[];
+}) => {
+  if (!isVisible) return null;
+
+  const steps = [
+    "retrievingContent",
+    "generatingSummary",
+    "extractingKeywords",
+    "searchingSimilarArticles",
+    "assessingResearch"
+  ];
+
+  const stepLabels: Record<string, string> = {
+    retrievingContent: "Retrieving article content...",
+    generatingSummary: "Generating summary...",
+    extractingKeywords: "Extracting relevant keywords...",
+    searchingSimilarArticles: "Searching for similar articles...",
+    assessingResearch: "Assessing supporting and contradictory research..."
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+      <div className="bg-white rounded-lg shadow-xl max-w-xl w-full mx-4 p-6">
+        <h3 className="text-xl font-semibold text-gray-900 mb-4">Analyzing Article</h3>
+        <div className="space-y-6">
+          {steps.map((step, index) => {
+            // Only show steps that are in progress or completed
+            const shouldShow = steps.indexOf(currentStep) >= index || completedSteps.includes(step);
+            if (!shouldShow) return null;
+
+            const isCompleted = completedSteps.includes(step);
+            const isCurrent = currentStep === step;
+
+            return (
+              <div key={step} className="flex items-center gap-3">
+                {isCompleted ? (
+                  <CheckCircle2 className="h-6 w-6 text-green-500 flex-shrink-0" />
+                ) : isCurrent ? (
+                  <div className="h-6 w-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin flex-shrink-0"></div>
+                ) : (
+                  <div className="h-6 w-6 flex-shrink-0"></div>
+                )}
+                <div className="flex-1">
+                  <p className={`${isCompleted ? 'text-gray-600' : 'text-gray-900 font-medium'}`}>
+                    {stepLabels[step]}
+                  </p>
+                  {step === 'searchingSimilarArticles' && keywords && keywords.length > 0 && (
+                    <p className="text-sm text-gray-500 mt-1">
+                      Based on the following keywords: {keywords.join(', ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-center text-gray-500 text-sm mt-6">
+          Please wait while we process your article. This may take up to a minute.
+        </p>
+      </div>
+    </div>
+  );
+};
 
 export default function ArticleSummaryPage() {
   const router = useRouter();
@@ -39,6 +114,12 @@ export default function ArticleSummaryPage() {
   const [publishDate, setPublishDate] = useState("");
   const [activeGenderIndex, setActiveGenderIndex] = useState<number | undefined>(undefined);
   
+  // Loading overlay state
+  const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
+  const [currentStep, setCurrentStep] = useState<string>("retrievingContent");
+  const [completedSteps, setCompletedSteps] = useState<string[]>([]);
+  const [extractedKeywords, setExtractedKeywords] = useState<string[]>([]);
+  
   // Add state for storing related research results
   const [relatedResearch, setRelatedResearch] = useState<{
     supporting: Array<{title: string, url: string, abstract?: string, finding?: string}>;
@@ -52,21 +133,37 @@ export default function ArticleSummaryPage() {
     totalFound: 0
   });
   
-  // Loading state indicators moved to component level
-  const [loadingSteps, setLoadingSteps] = useState({
-    gettingContent: { status: 'loading' as 'loading' | 'done' | 'error' | 'waiting', done: false },
-    alternativeSource: { status: 'waiting' as 'loading' | 'done' | 'error' | 'waiting', done: false, hidden: true },
-    summarizing: { status: 'waiting' as 'loading' | 'done' | 'error' | 'waiting', done: false },
-    generating: { status: 'waiting' as 'loading' | 'done' | 'error' | 'waiting', done: false },
-    searchingSimilar: { status: 'waiting' as 'loading' | 'done' | 'error' | 'waiting', done: false }
-  });
-
-  // Helper function to update loading step status
-  const updateLoadingStep = useCallback((step: string, status: 'loading' | 'done' | 'error' | 'waiting', done: boolean = false, hidden: boolean = false) => {
-    setLoadingSteps(prev => ({
-      ...prev,
-      [step]: { ...prev[step as keyof typeof prev], status, done, hidden }
-    }));
+  // Helper function to update loading steps
+  const updateLoadingStep = useCallback((step: string, isComplete: boolean = false) => {
+    if (isComplete) {
+      // Check if the step is already in completedSteps to avoid unnecessary re-renders
+      setCompletedSteps(prev => {
+        if (prev.includes(step)) {
+          return prev;
+        }
+        return [...prev, step];
+      });
+      
+      // Move to the next step
+      const steps = ["retrievingContent", "generatingSummary", "extractingKeywords", "searchingSimilarArticles", "assessingResearch"];
+      const currentIndex = steps.indexOf(step);
+      if (currentIndex < steps.length - 1) {
+        setCurrentStep(steps[currentIndex + 1]);
+      } else {
+        // All steps are complete, hide overlay
+        setTimeout(() => {
+          setShowLoadingOverlay(false);
+        }, 1000); // Keep it visible briefly so user can see completion
+      }
+    } else {
+      // Only update current step if it's different
+      setCurrentStep(prevStep => {
+        if (prevStep === step) {
+          return prevStep;
+        }
+        return step;
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -76,91 +173,82 @@ export default function ArticleSummaryPage() {
     const storedUrl = typeof window !== 'undefined' ? sessionStorage.getItem('articleUrl') : null;
     const articleUrl = urlParam || storedUrl || "";
     
+    // Don't set URL if it's the same to avoid triggering a rerender
+    if (url !== articleUrl) {
     setUrl(articleUrl);
+    }
     
-    if (articleUrl) {
-      fetchSummary(articleUrl);
-    } else {
+    if (!articleUrl) {
       setIsLoading(false);
       setError("No article URL provided");
+      return;
     }
-  }, [searchParams]);
+    
+    // Check if this is a redirect from dashboard with preloaded data
+    const isPreprocessed = typeof window !== 'undefined' && sessionStorage.getItem('articlePreprocessed') === 'true';
+    
+    if (isPreprocessed) {
+      console.log("Article was preprocessed on dashboard, skipping loading overlay");
+      // Clear the preprocessed flag immediately
+      sessionStorage.removeItem('articlePreprocessed');
+      
+      // Try to get cached related research
+      const cachedRelatedResearch = sessionStorage.getItem('relatedResearchResults');
+      if (cachedRelatedResearch) {
+        try {
+          const parsedResearch = JSON.parse(cachedRelatedResearch);
+          setRelatedResearch(parsedResearch);
+          sessionStorage.removeItem('relatedResearchResults');
+        } catch (e) {
+          console.error('Error parsing cached related research:', e);
+        }
+      }
+      
+      // Try to get cached article result
+      const cachedResult = sessionStorage.getItem('articleResult');
+      if (cachedResult) {
+        try {
+          const parsedResult = JSON.parse(cachedResult);
+          setResult(parsedResult);
+          
+          // Set article title if available
+          if (parsedResult.title) {
+            setArticleTitle(parsedResult.title);
+          } else if (parsedResult.originalTitle) {
+            setArticleTitle(parsedResult.originalTitle);
+          }
+          
+          // Set extracted keywords if available
+          if (parsedResult.keywords && parsedResult.keywords.length > 0) {
+            setExtractedKeywords(parsedResult.keywords);
+          }
+          
+          sessionStorage.removeItem('articleResult');
+          setIsLoading(false);
+        } catch (e) {
+          console.error('Error parsing cached result:', e);
+          // If we can't parse the cached result, fetch it silently without showing the loading overlay
+          fetchSummaryQuietly(articleUrl);
+        }
+      } else {
+        // No cached result, fetch silently without showing the loading overlay
+        fetchSummaryQuietly(articleUrl);
+      }
+    } else {
+      if (articleUrl && !result && !streamedText && !isLoading) {
+        // Only fetch if we don't already have data and aren't already loading
+        fetchSummaryWithOverlay(articleUrl);
+      }
+    }
+    // Removed updateLoadingStep from dependencies to avoid triggering re-renders
+    // cacheInvalidator is only needed for the log message, not as a dependency
+  }, [searchParams, url, result, streamedText, isLoading]);
 
-  const fetchSummary = async (articleUrl: string) => {
+  // Fetch the summary without showing a loading overlay (for preprocessed articles)
+  const fetchSummaryQuietly = async (articleUrl: string) => {
     setIsLoading(true);
-    setResult(null);
-    setStreamedText('');
-    setError(null);
-    
-    // Reset loading steps
-    setLoadingSteps({
-      gettingContent: { status: 'loading', done: false },
-      alternativeSource: { status: 'waiting', done: false, hidden: true },
-      summarizing: { status: 'waiting', done: false },
-      generating: { status: 'waiting', done: false },
-      searchingSimilar: { status: 'waiting', done: false }
-    });
-    
-    // Reset related research
-    setRelatedResearch({
-      supporting: [],
-      contradictory: [],
-      totalFound: 0,
-      searchKeywords: []
-    });
     
     try {
-      // Set a default fallback title
-      let fallbackTitle = "Original Article";
-      
-      // Extract domain/title from URL to display while loading
-      try {
-        const url = new URL(articleUrl);
-        const domain = url.hostname.replace('www.', '');
-        fallbackTitle = "Article from " + domain;
-        
-        // Special handling for common scientific article repositories
-        // Extract article ID for PubMed Central articles
-        if (domain.includes('ncbi.nlm.nih.gov') && url.pathname.includes('articles')) {
-          const pmcMatch = url.pathname.match(/PMC(\d+)/i);
-          if (pmcMatch) {
-            fallbackTitle = `PMC Article ${pmcMatch[1]}`;
-            
-            // We'll get the article title from our API response instead of direct fetch
-            // which would cause CORS issues
-          }
-        }
-        
-        // Set a temporary title based on the URL while loading
-        const pathParts = url.pathname.split('/').filter(Boolean);
-        
-        // Try to extract a title from the URL path
-        if (pathParts.length > 0 && fallbackTitle.startsWith('Article from')) {
-          const lastPathPart = pathParts[pathParts.length - 1]
-            .replace(/[-_]/g, ' ')     // Replace dashes and underscores with spaces
-            .replace(/\.html$|\.php$|\.aspx$/, '')  // Remove common file extensions
-            .replace(/[0-9]+$/, '');   // Remove trailing numbers
-            
-          if (lastPathPart && lastPathPart.length > 3) {
-            // Convert to title case
-            const titleCased = lastPathPart
-              .split(' ')
-              .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-              .join(' ');
-            
-            if (titleCased.length > 10 && titleCased.length < 100) {
-              fallbackTitle = titleCased;
-            }
-          }
-        }
-        
-        // Set this as our initial guess at the article title
-        setArticleTitle(fallbackTitle);
-      } catch (e) {
-        // Ignore URL parsing errors
-        setArticleTitle(fallbackTitle);
-      }
-
       // Extract domain name for source
       try {
         const url = new URL(articleUrl);
@@ -185,7 +273,7 @@ export default function ArticleSummaryPage() {
           'jamanetwork.com': 'JAMA Network'
         };
         
-        // Check if the domain or a part of it matches our known sources
+        // Check if domain matches known sources
         const matchedSource = Object.entries(domainSourceMap).find(([key]) => 
           domain.includes(key)
         );
@@ -197,428 +285,92 @@ export default function ArticleSummaryPage() {
           const sourceName = domain.split('.')[0];
           setArticleSource(sourceName.charAt(0).toUpperCase() + sourceName.slice(1));
         }
-        
-        // Try to extract publication date from URL if possible
-        try {
-          const parsedUrl = new URL(articleUrl);
-          const pathParts = parsedUrl.pathname.split('/');
-          
-          // Look for year patterns in the URL path
-          const yearPattern = /20\d{2}/;
-          const yearPart = pathParts.find(part => yearPattern.test(part));
-          
-          // Set a placeholder publish date (actual date would come from article metadata)
-          const today = new Date();
-          setPublishDate(`${today.toLocaleString('default', { month: 'long' })} ${today.getDate()}, ${today.getFullYear()}`);
         } catch (e) {
           // Ignore URL parsing errors
-        }
+        setArticleSource("");
+      }
 
-        // Step 1: Getting article content
-        updateLoadingStep('gettingContent', 'loading');
-        
-        // Make the API request
-        console.log(`Sending request to summarize article: ${articleUrl}`);
-        const response = await fetch('/api/summarize-article', {
+      // Call the API to fetch summary
+      const response = await fetch('/api/summarize-article?cacheInvalidator=' + cacheInvalidator, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ 
-            url: articleUrl,
-            extractOriginalTitle: true,  // Add this flag to indicate we want the original title
-            fetchMetadata: true,         // Add this flag to indicate we want to fetch title/metadata server-side
-            findAlternativeSources: true // Add this flag to enable alternative source finding
-          }),
-        });
-
-        // Step 1 completed
-        updateLoadingStep('gettingContent', 'done', true);
+        body: JSON.stringify({ url: articleUrl }),
+      });
         
         if (!response.ok) {
-          const errorData = await response.json();
-          const errorMessage = errorData.error || 'Failed to summarize article';
-          console.error(`Article summarization error: ${errorMessage}`, errorData);
-          
-          // Provide more helpful error messages to the user
-          if (errorMessage.includes('paywall') || errorMessage.includes('access')) {
-            setError(`This article appears to be behind a paywall or requires access rights. Error: ${errorMessage}`);
-          } else if (errorMessage.includes('JAMA')) {
-            setError(`There was an issue accessing this JAMA article. JAMA articles often have access restrictions. Error: ${errorMessage}`);
-          } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
-            if (articleUrl.includes('pubs.geoscienceworld.org')) {
-              setError(`Unable to access this Geoscience World article. Geoscience World articles typically require institutional access or subscription. Try logging in through your institution or accessing this paper through Google Scholar.`);
-            } else {
-              setError(`This article cannot be accessed (403 Forbidden). The publisher likely has access restrictions or a paywall in place. Try logging in through your institution or accessing a public version through Google Scholar.`);
-            }
-          } else {
-            setError(errorMessage);
-          }
-          
-          setIsLoading(false);
-          throw new Error(errorMessage);
-        }
+        throw new Error(`Failed to fetch article: ${response.statusText}`);
+      }
 
-        // Check if response is JSON or plain text
-        const contentType = response.headers.get('Content-Type') || '';
-        
-        if (contentType.includes('text/plain')) {
-          // Handle streaming text response
+      const contentType = response.headers.get('content-type');
+      if (contentType && (contentType.includes('text/event-stream') || contentType.includes('text/plain'))) {
+        // Handle streaming response
           const reader = response.body?.getReader();
           const decoder = new TextDecoder();
           
           if (!reader) {
-            throw new Error('Failed to get response reader');
-          }
-
-          let done = false;
-          let accumulatedText = "";
+          throw new Error('Failed to read response stream');
+        }
+        
+        let accumulatedText = '';
+        
+        while (true) {
+          const { done, value } = await reader.read();
           
-          // Step 2: Show retrieving summary
-          updateLoadingStep('summarizing', 'loading');
-
-          // Check if the first chunk contains info about using an alternative source
-          let firstChunk = true;
-          let usingAlternativeSource = false;
-
-          while (!done) {
-            const { value, done: doneReading } = await reader.read();
-            done = doneReading;
-            
-            if (value) {
-              const chunkText = decoder.decode(value);
-              accumulatedText += chunkText;
-              
-              // Check the first chunk for alternative source notification
-              if (firstChunk) {
-                firstChunk = false;
-                
-                if (accumulatedText.includes('### Alternative Source Used:')) {
-                  usingAlternativeSource = true;
-                  
-                  // Show the alternative source step and mark it as done
-                  updateLoadingStep('alternativeSource', 'done', true, false);
-                  
-                  // Try to extract the alternative URL
-                  const alternativeSourceMatch = accumulatedText.match(/### Alternative Source Used: (https?:\/\/[^\s\n]+)/);
-                  if (alternativeSourceMatch && alternativeSourceMatch[1]) {
-                    console.log(`Using alternative source: ${alternativeSourceMatch[1]}`);
-                    // Could display this information to the user if desired
-                  }
-                }
-              }
-              
-              // Mark summarizing as done once we see the summarized title section
-              if (accumulatedText.includes('### Summarized Title:') && loadingSteps.summarizing.status !== 'done') {
-                updateLoadingStep('summarizing', 'done', true);
-                updateLoadingStep('generating', 'loading');
-              }
-              
-              // Check if keywords section is present to mark generating as done
-              if (accumulatedText.includes('### Keywords:') && loadingSteps.generating.status !== 'done') {
-                updateLoadingStep('generating', 'done', true);
-              }
-              
-              setStreamedText(accumulatedText);
-            }
+          if (done) {
+            break;
           }
           
-          // Mark all steps as done when completed
-          Object.keys(loadingSteps).forEach(step => {
-            updateLoadingStep(step as keyof typeof loadingSteps, 'done', true);
-          });
+          const chunk = decoder.decode(value, { stream: true });
+          accumulatedText += chunk;
+          setStreamedText(accumulatedText);
           
-          // Try to parse the text response into a structured format to prepare for title extraction
-          const parsedResult = parseTextResponse(accumulatedText);
-          if (parsedResult) {
-            setResult(parsedResult);
-            
-            const aiGeneratedTitle = parsedResult.title || "";
-            
-            // Start searching for related research if we have keywords
-            if (parsedResult.keywords && parsedResult.keywords.length > 0) {
-              // Search for related articles based on keywords
-              fetchRelatedResearch(parsedResult.keywords);
-            }
-            
-            // Extract the article title with various patterns
-            try {
-              // Check for common scientific article title patterns
-              const scientificTitlePatterns = [
-                // Look for explicit article title patterns common in scientific literature
-                /Article Title:\s*(.*?)(?=\n|$)/i,
-                /Research Title:\s*(.*?)(?=\n|$)/i,
-                /Paper Title:\s*(.*?)(?=\n|$)/i,
-                /Scientific Title:\s*(.*?)(?=\n|$)/i,
-                /Manuscript Title:\s*(.*?)(?=\n|$)/i,
-                /Publication Title:\s*(.*?)(?=\n|$)/i
-              ];
+          // Try to parse the accumulated text
+          try {
+            const parsedResult = parseTextResponse(accumulatedText);
+            if (parsedResult) {
+              setResult(parsedResult);
               
-              let extractedTitle = null;
-              
-              // Check for scientific article titles first (most reliable for scientific content)
-              for (const pattern of scientificTitlePatterns) {
-                const match = accumulatedText.match(pattern);
-                if (match && match[1]) {
-                  const potentialTitle = match[1].trim();
-                  if (potentialTitle.length > 5 && 
-                      potentialTitle.length < 200 && 
-                      potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
-                    extractedTitle = potentialTitle;
-                    break;
-                  }
-                }
-              }
-              
-              // If no scientific title found, check for explicit original title markers
-              if (!extractedTitle) {
-                const originalTitlePatterns = [
-                  /Original Title:\s*(.*?)(?=\n|$)/i,
-                  /Original Article Title:\s*(.*?)(?=\n|$)/i,
-                  /Article Original Title:\s*(.*?)(?=\n|$)/i,
-                  /Source Article Title:\s*(.*?)(?=\n|$)/i
-                ];
-                
-                for (const pattern of originalTitlePatterns) {
-                  const match = accumulatedText.match(pattern);
-                  if (match && match[1]) {
-                    const potentialTitle = match[1].trim();
-                    if (potentialTitle.length > 5 && 
-                        potentialTitle.length < 200 && 
-                        potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
-                      extractedTitle = potentialTitle;
-                      break;
-                    }
-                  }
-                }
-              }
-              
-              // If no explicit original title found, try generic title patterns
-              if (!extractedTitle) {
-                const genericTitlePatterns = [
-                  /Title of the article:\s*(.*?)(?=\n|$)/i,
-                  /Article title:\s*(.*?)(?=\n|$)/i,
-                  /Title:\s*(.*?)(?=\n|$)/i
-                ];
-                
-                for (const pattern of genericTitlePatterns) {
-                  const match = accumulatedText.match(pattern);
-                  if (match && match[1]) {
-                    const potentialTitle = match[1].trim();
-                    if (potentialTitle.length > 5 && 
-                        potentialTitle.length < 200 && 
-                        potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
-                      extractedTitle = potentialTitle;
-                      break;
-                    }
-                  }
-                }
-              }
-              
-              // For scientific articles, look for patterns like "Authors et al. Title..."
-              if (!extractedTitle) {
-                // Match patterns like: "Smith et al. The effects of..." or "Smith J, et al. The effects of..."
-                const authorTitlePattern = /([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)(?:\s[A-Z](?:\s|,))?\set\sal\.\s+([^.]+)/;
-                const match = accumulatedText.match(authorTitlePattern);
-                if (match && match[2]) {
-                  const potentialTitle = match[2].trim();
-                  if (potentialTitle.length > 15 && 
-                      potentialTitle.length < 200 && 
-                      potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
-                    extractedTitle = potentialTitle;
-                  }
-                }
-              }
-              
-              // If still no title found, look for the first long line that could be a title
-              if (!extractedTitle) {
-                const lines = accumulatedText.split('\n')
-                  .map(line => line.trim())
-                  .filter(line => 
-                    line.length > 15 && line.length < 200 &&  // Reasonable title length
-                    !line.startsWith('#') && 
-                    !line.startsWith('-') && 
-                    !line.startsWith('•') &&
-                    !line.includes(':') &&  // Avoid lines with colons which often indicate section headers
-                    !line.includes('Keywords') &&
-                    !line.includes('Summary') &&
-                    !line.includes('Visual') &&
-                    !line.includes('Cohort') &&
-                    !line.includes('Analysis')
-                  );
-                
-                // Take the first line that's different from the AI title
-                for (const line of lines) {
-                  if (line.toLowerCase().trim() !== aiGeneratedTitle.toLowerCase().trim()) {
-                    extractedTitle = line;
-                    break;
-                  }
-                }
-              }
-              
-              // Special handling for PubMed/NCBI articles - look for title in specific format
-              if (articleUrl.includes('ncbi.nlm.nih.gov') && !extractedTitle) {
-                // Look for title in first few lines that ends with a year or DOI
-                const pmcTitlePattern = /^((?:(?!DOI|doi|\d{4}).)+)(?:\.\s+\d{4}|\.\s+doi:)/m;
-                const match = accumulatedText.match(pmcTitlePattern);
-                if (match && match[1]) {
-                  const potentialTitle = match[1].trim();
-                  if (potentialTitle.length > 15 && 
-                      potentialTitle.length < 200 && 
-                      potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
-                    extractedTitle = potentialTitle;
-                  }
-                }
-                
-                // Try to find a title that is followed by author names
-                if (!extractedTitle) {
-                  const titleAuthorPattern = /^([^.]+)(?:\.\s+(?:By\s+)?[A-Z][a-z]+\s+(?:[A-Z]\.?\s+)?[A-Z][a-z]+)/m;
-                  const match = accumulatedText.match(titleAuthorPattern);
-                  if (match && match[1]) {
-                    const potentialTitle = match[1].trim();
-                    if (potentialTitle.length > 15 && 
-                        potentialTitle.length < 200 && 
-                        potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase() &&
-                        !potentialTitle.includes('Keywords') &&
-                        !potentialTitle.includes('Abstract')) {
-                      extractedTitle = potentialTitle;
-                    }
-                  }
-                }
-                
-                // Last attempt - look for a title in "Acta Orthop. YYYY..." format
-                if (!extractedTitle) {
-                  const journalTitlePattern = /^([^.]+)(?:\.\s+[A-Za-z\s]+\.\s+\d{4})/m;
-                  const match = accumulatedText.match(journalTitlePattern);
-                  if (match && match[1]) {
-                    const potentialTitle = match[1].trim();
-                    if (potentialTitle.length > 15 && 
-                        potentialTitle.length < 200 && 
-                        potentialTitle.toLowerCase() !== aiGeneratedTitle.toLowerCase()) {
-                      extractedTitle = potentialTitle;
-                    }
-                  }
-                }
-              }
-              
-              // If we found a good title that's different from the AI title, use it
-              if (extractedTitle && 
-                  extractedTitle.toLowerCase().trim() !== aiGeneratedTitle.toLowerCase().trim() &&
-                  // Ensure it's not a comma-separated list (keywords)
-                  extractedTitle.split(',').length < 3) {
-                setArticleTitle(extractedTitle);
-              } else if (articleUrl.includes('pmc.ncbi.nlm.nih.gov/articles/PMC')) {
-                // For PMC articles, check if we've extracted a real title (not just an ID) in fallbackTitle
-                if (!fallbackTitle.startsWith('PMC Article') && !fallbackTitle.startsWith('Article from')) {
-                  setArticleTitle(fallbackTitle);
-                } else {
-                  // For PMC articles, create a map of known article IDs to titles
-                  const pmcTitles: Record<string, string> = {
-                    "PMC5389428": "Ageing in the musculoskeletal system",
-                    "PMC10359191": "Intervertebral disc degeneration—Current therapeutic options and challenges",
-                    "PMC11189324": "Occurrence and sources of hormones in water resources—environmental and health impact"
-                  };
-                  
-                  // Extract the PMC ID from the URL
-                  const pmcIdMatch = articleUrl.match(/PMC(\d+)/i);
-                  if (pmcIdMatch && pmcIdMatch[1] && pmcTitles[`PMC${pmcIdMatch[1]}`]) {
-                    setArticleTitle(pmcTitles[`PMC${pmcIdMatch[1]}`]);
-                  } else {
-                    // Keep using the fallback title from URL
-                    console.log("Using fallback title from URL for PMC article");
-                  }
-                }
-              } else {
-                // Keep using the fallback title from URL
-                console.log("Using fallback title from URL");
-              }
-            } catch (e) {
-              console.error("Error extracting article title:", e);
-              // Keep using the fallback title set earlier
-            }
-          } else {
-            // If parsing fails, keep using fallback title
-            setStreamedText(accumulatedText);
-          }
-        } else {
-          // Handle JSON response
-          const data = await response.json();
-          setResult(data);
-          
-          const aiGeneratedTitle = data.title || "";
-          
-          // Extract article title from JSON response if it exists and is different from AI title
-          if (data.articleTitle && 
-              data.articleTitle.toLowerCase().trim() !== aiGeneratedTitle.toLowerCase().trim()) {
-            setArticleTitle(data.articleTitle);
-          } else if (data.originalTitle && 
-                    data.originalTitle.toLowerCase().trim() !== aiGeneratedTitle.toLowerCase().trim()) {
-            setArticleTitle(data.originalTitle);
-          } else if (articleUrl.includes('pmc.ncbi.nlm.nih.gov/articles/PMC')) {
-            // For PMC articles, check if we've extracted a real title (not just an ID) in fallbackTitle
-            if (!fallbackTitle.startsWith('PMC Article') && !fallbackTitle.startsWith('Article from')) {
-              setArticleTitle(fallbackTitle);
-            } else {
-              // For PMC articles, create a map of known article IDs to titles
-              const pmcTitles: Record<string, string> = {
-                "PMC5389428": "Ageing in the musculoskeletal system",
-                "PMC10359191": "Intervertebral disc degeneration—Current therapeutic options and challenges",
-                "PMC11189324": "Occurrence and sources of hormones in water resources—environmental and health impact"
-              };
-              
-              // Extract the PMC ID from the URL
-              const pmcIdMatch = articleUrl.match(/PMC(\d+)/i);
-              if (pmcIdMatch && pmcIdMatch[1] && pmcTitles[`PMC${pmcIdMatch[1]}`]) {
-                setArticleTitle(pmcTitles[`PMC${pmcIdMatch[1]}`]);
-              } else {
-                // Keep using the fallback title set earlier
-                console.log("Using fallback title - no distinct title in API response for PMC article");
+              // If we have keywords, fetch related research silently
+              if (parsedResult.keywords && parsedResult.keywords.length > 0) {
+                setExtractedKeywords(parsedResult.keywords);
+                fetchRelatedResearchQuietly(parsedResult.keywords);
               }
             }
-          } else {
-            // Keep using the fallback title set earlier
-            console.log("Using fallback title - no distinct title in API response");
-          }
-          
-          // Extract publication source and date if available
-          if (data.source) {
-            setArticleSource(data.source);
-          }
-          
-          if (data.publishDate) {
-            setPublishDate(data.publishDate);
+          } catch (parseError: any) {
+            setParseError(`Unable to parse response: ${parseError.message}. The API returned markdown text instead of JSON format, but we'll still show you the content.`);
           }
         }
-      } catch (error) {
-        console.error("Error:", error);
-        setError(error instanceof Error ? error.message : 'An unexpected error occurred');
-      } finally {
-        setIsLoading(false);
+      } else {
+        // Handle JSON response
+        const data = await response.json();
+        
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        
+        setResult(data);
+        setArticleTitle(data.title || articleTitle);
+        
+        // If we have keywords, fetch related research silently
+        if (data.keywords && data.keywords.length > 0) {
+          setExtractedKeywords(data.keywords);
+          fetchRelatedResearchQuietly(data.keywords);
+        }
       }
-    } catch (e) {
-      // Handle errors from second try block
-      console.error("URL processing error:", e);
-      setError(e instanceof Error ? e.message : 'Failed to process the article URL');
+    } catch (error: unknown) {
+      console.error('Error fetching article quietly:', error);
+      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
+      setError(errorMessage);
+    } finally {
       setIsLoading(false);
     }
   };
 
-  // Add a function to fetch related research
-  const fetchRelatedResearch = useCallback(async (keywords: string[]) => {
-    if (!keywords || keywords.length === 0) {
-      return;
-    }
-    
+  // Fetch related research without showing loading steps (for preprocessed articles)
+  const fetchRelatedResearchQuietly = async (keywords: string[]) => {
     try {
-      // Update loading step with keywords
-      updateLoadingStep('searchingSimilar', 'loading');
-      
-      // Store the keywords being used for the loading message
-      setRelatedResearch(prev => ({
-        ...prev,
-        searchKeywords: keywords
-      }));
-      
       const response = await fetch('/api/semantic-scholar-search', {
         method: 'POST',
         headers: {
@@ -630,43 +382,305 @@ export default function ArticleSummaryPage() {
           articleTitle
         }),
       });
-      
+
       if (!response.ok) {
-        const errorData = await response.json();
-        updateLoadingStep('searchingSimilar', 'error');
-        console.error("Error fetching related research:", errorData);
-        setRelatedResearch({
-          supporting: [],
-          contradictory: [],
-          searchKeywords: keywords,
-          error: errorData.error || "Failed to fetch related research"
-        });
-        return;
+        throw new Error(`Failed to fetch related research: ${response.statusText}`);
       }
-      
+
       const data = await response.json();
       
-      updateLoadingStep('searchingSimilar', 'done', true);
-      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
       setRelatedResearch({
         supporting: data.supporting || [],
         contradictory: data.contradictory || [],
         totalFound: data.totalFound || 0,
         searchKeywords: keywords,
-        error: data.error
+      });
+    } catch (error) {
+      const err = error as Error;
+      console.error('Error fetching related research quietly:', err);
+      setRelatedResearch(prev => ({
+        ...prev,
+        error: err.message,
+        searchKeywords: keywords,
+      }));
+    }
+  };
+
+  // Original fetchSummary method with loading overlay (renamed for clarity)
+  const fetchSummaryWithOverlay = async (articleUrl: string) => {
+    // Prevent multiple loading states or reprocessing the same URL
+    if (isLoading || showLoadingOverlay) {
+      return;
+    }
+    
+    setIsLoading(true);
+    setResult(null);
+    setStreamedText('');
+    setError(null);
+    setShowLoadingOverlay(true);
+    setCurrentStep("retrievingContent");
+    setCompletedSteps([]);
+    setExtractedKeywords([]);
+    
+    // Reset related research
+    setRelatedResearch({
+      supporting: [],
+      contradictory: [],
+      totalFound: 0,
+      searchKeywords: []
+    });
+    
+    try {
+      // Extract domain name for source
+      try {
+        const url = new URL(articleUrl);
+        const domain = url.hostname.replace('www.', '');
+        
+        // Common domain to source name mappings
+        const domainSourceMap: Record<string, string> = {
+          'nature.com': 'Nature Medicine',
+          'science.org': 'Science',
+          'cell.com': 'Cell',
+          'nejm.org': 'New England Journal of Medicine',
+          'thelancet.com': 'The Lancet',
+          'pubmed.ncbi.nlm.nih.gov': 'PubMed',
+          'pmc.ncbi.nlm.nih.gov': 'PubMed Central',
+          'sciencedirect.com': 'ScienceDirect',
+          'springer.com': 'Springer',
+          'wiley.com': 'Wiley',
+          'nih.gov': 'NIH',
+          'cdc.gov': 'CDC',
+          'biorxiv.org': 'bioRxiv',
+          'medrxiv.org': 'medRxiv',
+          'jamanetwork.com': 'JAMA Network'
+        };
+        
+        // Check if domain matches known sources
+        const matchedSource = Object.entries(domainSourceMap).find(([key]) => 
+          domain.includes(key)
+        );
+        
+        if (matchedSource) {
+          setArticleSource(matchedSource[1]);
+        } else {
+          // Use capitalized domain name as fallback
+          const sourceName = domain.split('.')[0];
+          setArticleSource(sourceName.charAt(0).toUpperCase() + sourceName.slice(1));
+        }
+      } catch (e) {
+        // Ignore URL parsing errors
+        setArticleSource("");
+      }
+
+      // Call the API to fetch and summarize the article
+      try {
+        const response = await fetch('/api/summarize-article?cacheInvalidator=' + cacheInvalidator, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ url: articleUrl }),
+        });
+
+        if (!response.ok) {
+          // If we can't access the article directly, try to find an alternative source
+          if (response.status === 403 || response.status === 401) {
+            // Mark content retrieval as failed but continue with other steps
+            throw new Error("Article access restricted. Possible paywall or access controls.");
+          }
+          
+          const errorText = await response.text();
+          throw new Error(errorText || `Failed to fetch article: ${response.statusText}`);
+        }
+
+        // Content retrieved successfully
+        updateLoadingStep("retrievingContent", true);
+        
+        // Now we're generating the summary
+        updateLoadingStep("generatingSummary");
+
+        // Check if the response is a stream or plain text
+        const contentType = response.headers.get('content-type');
+        
+        if (contentType && (contentType.includes('text/event-stream') || contentType.includes('text/plain'))) {
+          // Handle streaming response or plain text
+          const reader = response.body?.getReader();
+          const decoder = new TextDecoder();
+          
+          if (!reader) {
+            throw new Error('Failed to read response stream');
+          }
+          
+          let accumulatedText = '';
+          
+          while (true) {
+            const { done, value } = await reader.read();
+            
+            if (done) {
+                    break;
+            }
+            
+            const chunk = decoder.decode(value, { stream: true });
+            accumulatedText += chunk;
+            setStreamedText(accumulatedText);
+            
+            // Try to parse the accumulated text
+            try {
+              const parsedResult = parseTextResponse(accumulatedText);
+              if (parsedResult) {
+                setResult(parsedResult);
+                
+                // If we have keywords, update the extractedKeywords
+                if (parsedResult.keywords && parsedResult.keywords.length > 0) {
+                  setExtractedKeywords(parsedResult.keywords);
+                  updateLoadingStep("generatingSummary", true);
+                  updateLoadingStep("extractingKeywords", true);
+                  
+                  // Now search for related research
+                  updateLoadingStep("searchingSimilarArticles");
+                  fetchRelatedResearch(parsedResult.keywords);
+                }
+              }
+            } catch (parseError: any) {
+              setParseError(`Unable to parse response: ${parseError.message}. The API returned markdown text instead of JSON format, but we'll still show you the content.`);
+              // Don't throw an error here, we'll just keep accumulating text
+            }
+          }
+          
+          // If we reach here and haven't parsed a result, try one more time
+          if (!result && accumulatedText) {
+            try {
+              const parsedResult = parseTextResponse(accumulatedText);
+              if (parsedResult) {
+                setResult(parsedResult);
+                
+                // If we have keywords, update the extractedKeywords and fetch related research
+                if (parsedResult.keywords && parsedResult.keywords.length > 0) {
+                  setExtractedKeywords(parsedResult.keywords);
+                  updateLoadingStep("generatingSummary", true);
+                  updateLoadingStep("extractingKeywords", true);
+                  
+                  // Now search for related research
+                  updateLoadingStep("searchingSimilarArticles");
+                  fetchRelatedResearch(parsedResult.keywords);
+                }
+              }
+            } catch (parseError: any) {
+              setParseError(`Unable to parse response: ${parseError.message}. The API returned markdown text instead of JSON format, but we'll still show you the content.`);
+              // Still show the text even if we can't parse it
+              console.error('Failed to parse streamed text:', parseError);
+            }
+            }
+          } else {
+          // Handle regular JSON response
+          const data = await response.json();
+          
+          if (data.error) {
+            throw new Error(data.error);
+          }
+          
+          setResult(data);
+          setArticleTitle(data.title || articleTitle);
+          
+          // Mark summary generation as complete
+          updateLoadingStep("generatingSummary", true);
+          
+          // If we have keywords, fetch related research
+          if (data.keywords && data.keywords.length > 0) {
+            setExtractedKeywords(data.keywords);
+            updateLoadingStep("extractingKeywords", true);
+            
+            // Now search for related research
+            updateLoadingStep("searchingSimilarArticles");
+            fetchRelatedResearch(data.keywords);
+          }
+        }
+      } catch (error: unknown) {
+        console.error('Error fetching article:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Failed to fetch article summary';
+        setError(errorMessage);
+        setIsLoading(false);
+        setShowLoadingOverlay(false);
+      }
+    } catch (error: unknown) {
+      console.error('Error in overall fetch process:', error);
+      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
+      setError(errorMessage);
+      setIsLoading(false);
+      setShowLoadingOverlay(false);
+    }
+  };
+
+  // Add a function to fetch related research
+  const fetchRelatedResearch = useCallback(async (keywords: string[]) => {
+    try {
+      // Update the loading step to searching for similar articles
+      updateLoadingStep("searchingSimilarArticles");
+      
+      // Update search keywords in the state
+      setRelatedResearch(prev => ({
+        ...prev,
+        searchKeywords: keywords
+      }));
+      
+      // Call the API to fetch related research
+      const response = await fetch('/api/semantic-scholar-search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          keywords,
+          url,
+          articleTitle
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch related research: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      // Store the research results
+      setRelatedResearch({
+        supporting: data.supporting || [],
+        contradictory: data.contradictory || [],
+        totalFound: data.totalFound || 0,
+        searchKeywords: keywords,
       });
       
-      console.log("Related research loaded:", data);
-    } catch (error) {
-      console.error("Error fetching related research:", error);
-      updateLoadingStep('searchingSimilar', 'error');
-      setRelatedResearch({
-        supporting: [],
-        contradictory: [],
+      // Mark research assessment as complete
+      updateLoadingStep("searchingSimilarArticles", true);
+      updateLoadingStep("assessingResearch", true);
+      
+      // Finish loading after everything is complete
+      setTimeout(() => {
+        setIsLoading(false);
+      }, 500);
+
+      } catch (error) {
+      const err = error as Error;
+      console.error('Error fetching related research:', err);
+      setRelatedResearch(prev => ({
+        ...prev,
+        error: err.message,
         searchKeywords: keywords,
-        error: error instanceof Error ? error.message : "Unknown error fetching related research"
-      });
-    }
+      }));
+      
+      // Mark as error but still complete the step
+      updateLoadingStep("searchingSimilarArticles", true);
+      updateLoadingStep("assessingResearch", true);
+        setIsLoading(false);
+      }
   }, [url, articleTitle, updateLoadingStep]);
 
   // Function to parse the plain text response
@@ -1556,26 +1570,203 @@ export default function ArticleSummaryPage() {
 
     return (
       <div className="space-y-6">
-        {/* Study Type - Only show if present */}
+        {/* First row: Study Type and Study Duration */}
+        <div className="flex flex-wrap gap-6">
+          {/* Study Type */}
         {studyType && (
-          <div>
-            <h4 className="text-gray-700 font-medium mb-1">Study Type</h4>
+            <div className="flex-1 min-w-[200px]">
+              <h4 className="text-gray-700 font-medium mb-2">Study Type</h4>
             <p>{studyType}</p>
           </div>
         )}
         
-        {/* Sample Size - Only show if present */}
-        {cohortSize > 0 && (
-          <div>
-            <h4 className="text-gray-700 font-medium mb-2">Sample Size</h4>
+          {/* Study Duration and Date Range */}
+          {(duration || dateRange) ? (
+            <div className="flex-1 min-w-[200px]">
+              <h4 className="text-gray-700 font-medium mb-2">Study Duration</h4>
+              {dateRange && <p className="text-sm mb-1">{dateRange}</p>}
+              {duration && durationMonths > 0 && (
             <div className="flex items-center gap-4">
-              <div className="bg-blue-100 text-blue-800 px-4 py-2 rounded-md">
-                <span className="text-xl font-semibold">{cohortSize.toLocaleString()}</span>
-                <span className="text-sm ml-2">participants</span>
+                  <div className="flex-1">
+                    <div className="w-full bg-gray-200 rounded-full h-2 mb-1">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full" 
+                        style={{ width: `${durationPercentage}%` }}
+                      ></div>
+              </div>
+            </div>
+                  <div className="whitespace-nowrap text-sm font-medium">
+                    {duration}
+                  </div>
+          </div>
+                      )}
+                    </div>
+          ) : (
+            <div className="flex-1 min-w-[200px]">
+              <h4 className="text-gray-700 font-medium mb-2">Study Duration</h4>
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
+                <div className="flex items-center text-gray-500">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="text-sm">
+                    No study duration information was provided
+                  </p>
+                </div>
+              </div>
+                </div>
+              )}
+            </div>
+        
+        {/* Second row: Sample Size and Age Distribution */}
+        <div className="flex flex-wrap gap-6">
+          {/* Sample Size */}
+          {cohortSize > 0 && (
+            <div className="flex-1 min-w-[200px]">
+              <h4 className="text-gray-700 font-medium mb-2">Sample Size</h4>
+            <div className="flex items-center gap-4">
+                <div className="bg-blue-100 text-blue-800 px-4 py-2 rounded-md">
+                  <span className="text-xl font-semibold">{cohortSize.toLocaleString()}</span>
+                  <span className="text-sm ml-2">participants</span>
               </div>
             </div>
           </div>
         )}
+        
+          {/* Age Distribution - Multiple age ranges (Chart) */}
+        {((hasAgeData && cohortStratification.ageRanges.length > 1) || (ageRangesData.length > 1)) && (
+            <div className="flex-1 min-w-[200px]">
+            <h4 className="text-gray-700 font-medium mb-2">Age Distribution</h4>
+            <div className="h-52">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={ageRangesData.length > 0 ? ageRangesData : cohortStratification.ageRanges}
+                  margin={{ top: 10, right: 20, left: 20, bottom: 50 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="range" 
+                    angle={-45}
+                    textAnchor="end"
+                    height={60}
+                    tick={{fontSize: 12}}
+                    tickFormatter={(value) => {
+                      // Ensure all age ranges are properly displayed
+                      if (value === "18-2") return "18-24";
+                      if (value === "25-3") return "25-34";
+                      if (value === "35-4") return "35-49";
+                      if (value === "50-6") return "50-64";
+                      return value;
+                    }}
+                  />
+                  <YAxis 
+                      tickFormatter={(value) => `${value}%`}
+                      tick={{fontSize: 12}}
+                  />
+                  <Tooltip 
+                      formatter={(value, name, props) => {
+                        if (props.payload.count !== undefined) {
+                          return [`${value}% (${props.payload.count} participants)`, "Percentage"];
+                        }
+                        return [`${value}%`, "Percentage"];
+                      }}
+                      labelFormatter={(label) => `Age: ${label}`}
+                  />
+                  <Bar 
+                      dataKey="percentage" 
+                    fill="#3b82f6" 
+                      label={{
+                        position: 'top',
+                        formatter: (value: number) => `${value}%`,
+                        fontSize: 12,
+                        fill: '#6b7280'
+                      }} 
+                    />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+        
+          {/* Age Distribution - Single age range (Info box) */}
+          {hasAgeData && hasOnlyOneAgeRange && (
+            <div className="flex-1 min-w-[200px]">
+            <h4 className="text-gray-700 font-medium mb-2">Age Distribution</h4>
+            <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
+              <div className="flex items-center">
+                <div className="text-blue-500 mr-3">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm text-blue-800 font-medium">
+                    {cohortStratification.ageRanges[0].range}: {cohortStratification.ageRanges[0].percentage}% of participants
+                  </p>
+                  {cohortSize > 0 && (
+                    <p className="text-xs text-blue-600">
+                      Approximately {Math.round((cohortStratification.ageRanges[0].percentage / 100) * cohortSize)} out of {cohortSize} total participants
+                    </p>
+                  )}
+                </div>
+                {cohortSize > 0 && (
+                  <div className="ml-4 flex-shrink-0">
+                    <div 
+                      className="rounded-full px-3 py-1 text-sm font-medium" 
+                      style={{ 
+                        backgroundColor: CHART_COLORS[0],
+                        color: 'white'
+                      }}
+                    >
+                      {Math.round((cohortStratification.ageRanges[0].percentage / 100) * cohortSize)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        
+          {/* Age Distribution - Text notes */}
+        {!hasAgeData && ageTextNotes.length > 0 && (
+            <div className="flex-1 min-w-[200px]">
+            <h4 className="text-gray-700 font-medium mb-2">Age Distribution</h4>
+            <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
+              <div className="flex items-start space-x-3">
+                <div className="text-blue-500 mt-0.5 flex-shrink-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  {ageTextNotes.map((note: string, index: number) => (
+                    <p key={`age-note-${index}`} className={`text-sm ${index === 0 ? 'font-medium text-blue-800' : 'text-blue-700'} ${index !== ageTextNotes.length - 1 ? 'mb-2' : ''}`}>
+                      {note}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        
+          {/* Age Distribution - No data message */}
+          {!hasAgeData && ageTextNotes.length === 0 && (
+            <div className="flex-1 min-w-[200px]">
+            <h4 className="text-gray-700 font-medium mb-2">Age Distribution</h4>
+            <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
+              <div className="flex items-center text-gray-500">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p className="text-sm">
+                  No age distribution data was provided in this study
+                </p>
+              </div>
+              </div>
+            </div>
+          )}
+        </div>
         
         {/* Gender Distribution - Only show if we have gender data */}
         {hasGenderData && (
@@ -1622,173 +1813,6 @@ export default function ArticleSummaryPage() {
           </div>
         )}
         
-        {/* Study Duration - Only show if present and we have calculated months */}
-        {duration && durationMonths > 0 && (
-          <div>
-            <h4 className="text-gray-700 font-medium mb-2">Study Duration</h4>
-            <div className="flex items-center gap-4">
-              <div className="flex-1">
-                <div className="w-full bg-gray-200 rounded-full h-2 mb-1">
-                  <div 
-                    className="bg-blue-600 h-2 rounded-full" 
-                    style={{ width: `${durationPercentage}%` }}
-                  ></div>
-                </div>
-              </div>
-              <div className="whitespace-nowrap text-sm font-medium">
-                {duration}
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* Age Distribution - Show chart only if we have multiple age ranges */}
-        {((hasAgeData && cohortStratification.ageRanges.length > 1) || (ageRangesData.length > 1)) && (
-          <div>
-            <h4 className="text-gray-700 font-medium mb-2">Age Distribution</h4>
-            <div className="h-52">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={ageRangesData.length > 0 ? ageRangesData : cohortStratification.ageRanges}
-                  margin={{ top: 10, right: 20, left: 20, bottom: 50 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="range" 
-                    angle={-45}
-                    textAnchor="end"
-                    height={60}
-                    tick={{fontSize: 12}}
-                    tickFormatter={(value) => {
-                      // Ensure all age ranges are properly displayed
-                      if (value === "18-2") return "18-24";
-                      if (value === "25-3") return "25-34";
-                      if (value === "35-4") return "35-49";
-                      if (value === "50-6") return "50-64";
-                      return value;
-                    }}
-                  />
-                  <YAxis 
-                    label={{ value: 'Participants', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }} 
-                    tickFormatter={(value) => `${value}`} 
-                  />
-                  <Tooltip 
-                    formatter={(value: any, name: string, props: any) => {
-                      const item = props.payload;
-                      return [
-                        `${item.count || value} participants (${item.percentage || value}%)`,
-                        'Distribution'
-                      ];
-                    }} 
-                  />
-                  <Bar 
-                    dataKey="count" 
-                    name="Participants" 
-                    fill="#3b82f6" 
-                    radius={[4, 4, 0, 0]}
-                  >
-                    {ageRangesData.length > 0 
-                      ? ageRangesData.map((entry: { range: string, percentage: number, count: number }, index: number) => (
-                          <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                        ))
-                      : cohortStratification.ageRanges.map((entry: { range: string, percentage: number }, index: number) => (
-                          <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                        ))
-                    }
-                    {ageRangesData.length > 0 && ageRangesData.map((entry: { count: number }, index: number) => (
-                      <LabelList 
-                        key={`label-${index}`}
-                        dataKey="count" 
-                        position="top"
-                        formatter={(value: any) => `${value}`}
-                      />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
-        
-        {/* Display a simplified view for a single age range */}
-        {hasOnlyOneAgeRange && (
-          <div>
-            <h4 className="text-gray-700 font-medium mb-2">Age Distribution</h4>
-            <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
-              <div className="flex items-center">
-                <div className="text-blue-500 mr-3">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                  </svg>
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm text-blue-800 font-medium">
-                    {cohortStratification.ageRanges[0].range}: {cohortStratification.ageRanges[0].percentage}% of participants
-                  </p>
-                  {cohortSize > 0 && (
-                    <p className="text-xs text-blue-600">
-                      Approximately {Math.round((cohortStratification.ageRanges[0].percentage / 100) * cohortSize)} out of {cohortSize} total participants
-                    </p>
-                  )}
-                </div>
-                {cohortSize > 0 && (
-                  <div className="ml-4 flex-shrink-0">
-                    <div 
-                      className="rounded-full px-3 py-1 text-sm font-medium" 
-                      style={{ 
-                        backgroundColor: CHART_COLORS[0],
-                        color: 'white'
-                      }}
-                    >
-                      {Math.round((cohortStratification.ageRanges[0].percentage / 100) * cohortSize)}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* Display age-related notes if available but no structured data */}
-        {!hasAgeData && ageTextNotes.length > 0 && (
-          <div>
-            <h4 className="text-gray-700 font-medium mb-2">Age Distribution</h4>
-            <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
-              <div className="flex items-start space-x-3">
-                <div className="text-blue-500 mt-0.5 flex-shrink-0">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                  </svg>
-                </div>
-                <div className="flex-1">
-                  {ageTextNotes.map((note: string, index: number) => (
-                    <p key={`age-note-${index}`} className={`text-sm ${index === 0 ? 'font-medium text-blue-800' : 'text-blue-700'} ${index !== ageTextNotes.length - 1 ? 'mb-2' : ''}`}>
-                      {note}
-                    </p>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* Display a message when no age data is available */}
-        {!hasAgeData && ageTextNotes.length === 0 && studyType && (
-          <div>
-            <h4 className="text-gray-700 font-medium mb-2">Age Distribution</h4>
-            <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
-              <div className="flex items-center text-gray-500">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <p className="text-sm">
-                  No age distribution data was provided in this study
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-        
         {/* Geographic Distribution - Only show if we have geo data */}
         {hasGeoData && (
           <div>
@@ -1804,14 +1828,6 @@ export default function ArticleSummaryPage() {
                 </Badge>
               ))}
             </div>
-          </div>
-        )}
-        
-        {/* Date Range - Only show if present */}
-        {dateRange && (
-          <div>
-            <h4 className="text-gray-700 font-medium mb-1">Date Range</h4>
-            <p>{dateRange}</p>
           </div>
         )}
         
@@ -1835,7 +1851,7 @@ export default function ArticleSummaryPage() {
     const { supporting, contradictory, error: researchError, searchKeywords } = relatedResearch;
     
     if (researchError) {
-      return (
+  return (
         <div className="p-4 bg-red-50 border border-red-100 rounded-md">
           <p className="text-red-600">Error fetching related research: {researchError}</p>
         </div>
@@ -1843,7 +1859,7 @@ export default function ArticleSummaryPage() {
     }
     
     if (supporting.length === 0 && contradictory.length === 0) {
-      if (loadingSteps.searchingSimilar.status === 'loading') {
+      if (currentStep === "searchingSimilarArticles" && !completedSteps.includes("searchingSimilarArticles")) {
         return (
           <div className="p-6 text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-900 mx-auto mb-2"></div>
@@ -1883,8 +1899,8 @@ export default function ArticleSummaryPage() {
                     </a>
                   </h5>
                   {article.finding && (
-                    <p className="text-sm text-gray-700 my-1">
-                      <span className="text-green-600 font-medium">✓</span> {article.finding}
+                    <p className="text-sm text-gray-700 my-2 bg-green-50 p-2 rounded border-l-2 border-l-green-400">
+                      <span className="text-green-600 font-medium">This study supports: </span>{article.finding}
                     </p>
                   )}
                 </div>
@@ -1911,8 +1927,8 @@ export default function ArticleSummaryPage() {
                     </a>
                   </h5>
                   {article.finding && (
-                    <p className="text-sm text-gray-700 my-1">
-                      <span className="text-red-600 font-medium">✗</span> {article.finding}
+                    <p className="text-sm text-gray-700 my-2 bg-red-50 p-2 rounded border-l-2 border-l-red-400">
+                      <span className="text-red-600 font-medium">This study challenges: </span>{article.finding}
                     </p>
                   )}
                 </div>
@@ -1924,20 +1940,67 @@ export default function ArticleSummaryPage() {
     );
   };
 
+  // Add a function to handle URL submission from the article-summary page
+  const handleAnalyzeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!url.trim()) return;
+    
+    // When analyzing from the summary page, we want to show the loading overlay
+    // This is different from navigation from the dashboard
+    fetchSummaryWithOverlay(url);
+  };
+
   return (
-    <>
-      {/* Back button */}
-      <div className="mb-6">
-        <Button 
-          variant="ghost" 
-          size="sm" 
-          className="flex items-center gap-1 hover:bg-gray-100 pl-0 text-sm font-normal"
-          onClick={() => router.push('/dashboard')}
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Dashboard
-        </Button>
+    <div className="container max-w-screen-xl mx-auto py-6 px-4">
+      <div className="mb-8 flex items-center">
+        <Link href="/dashboard" className="text-gray-600 hover:text-gray-900 mr-4">
+          <ArrowLeft className="h-5 w-5" />
+        </Link>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Article Summary</h1>
+          <p className="text-gray-600">AI-powered insights from scientific research</p>
+        </div>
       </div>
+
+      {/* Loading Overlay */}
+      <LoadingOverlay 
+        isVisible={showLoadingOverlay} 
+        currentStep={currentStep} 
+        completedSteps={completedSteps} 
+        keywords={extractedKeywords}
+      />
+      
+      {/* URL Input for New Research */}
+      <Card className="mb-8 border border-gray-200 shadow-sm bg-white">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-xl font-bold">Analyze New Research</CardTitle>
+          <CardDescription>Enter a URL to a scientific article to get AI-powered insights</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleAnalyzeSubmit} className="flex w-full space-x-2">
+            <Input 
+              type="url" 
+              placeholder="Paste article URL here..." 
+              className="flex-1 border-gray-300 focus:border-[#1e3a6d] focus:ring-[#1e3a6d]"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              required
+              disabled={isLoading}
+            />
+        <Button 
+              type="submit" 
+              className="bg-[#1e3a6d] hover:bg-[#0f2a4d] text-white px-6"
+              disabled={isLoading}
+            >
+              Analyze <ArrowRight className="ml-2 h-4 w-4" />
+        </Button>
+          </form>
+          {error && !result && !streamedText && (
+            <p className="mt-2 text-sm text-red-600">{error}</p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Article metadata and title section */}
       <div className="mb-8">
@@ -2009,79 +2072,13 @@ export default function ArticleSummaryPage() {
             <div className="bg-white py-8">
               <div className="flex flex-col items-center justify-center space-y-6 px-4">
                 <div className="space-y-5 w-full max-w-md">
-                  {/* Step 1: Getting content */}
-                  <div className="flex items-center">
-                    {loadingSteps.gettingContent.status === 'loading' ? (
-                      <div className="w-6 h-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mr-3"></div>
-                    ) : loadingSteps.gettingContent.status === 'done' ? (
-                      <div className="text-green-500 mr-3">✅</div>
-                    ) : (
-                      <div className="w-6 h-6 mr-3"></div>
-                    )}
-                    <span className={`${loadingSteps.gettingContent.status === 'done' ? 'text-gray-500' : 'text-gray-700'} font-medium`}>
-                      Getting article content...
-                    </span>
+                  {/* Loading spinner */}
+                  <div className="flex items-center justify-center">
+                    <div className="w-12 h-12 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin"></div>
                   </div>
-                  
-                  {/* Step 2: Finding alternative source (only shown if needed) */}
-                  {!loadingSteps.alternativeSource.hidden && (
-                    <div className="flex items-center">
-                      {loadingSteps.alternativeSource.status === 'loading' ? (
-                        <div className="w-6 h-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mr-3"></div>
-                      ) : loadingSteps.alternativeSource.status === 'done' ? (
-                        <div className="text-green-500 mr-3">✅</div>
-                      ) : (
-                        <div className="w-6 h-6 mr-3"></div>
-                      )}
-                      <span className={`${loadingSteps.alternativeSource.status === 'done' ? 'text-gray-500' : 'text-gray-700'} font-medium`}>
-                        Finding alternative source for the same content...
-                      </span>
-                    </div>
-                  )}
-                  
-                  {/* Step 3: Retrieving summary */}
-                  <div className="flex items-center">
-                    {loadingSteps.summarizing.status === 'loading' ? (
-                      <div className="w-6 h-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mr-3"></div>
-                    ) : loadingSteps.summarizing.status === 'done' ? (
-                      <div className="text-green-500 mr-3">✅</div>
-                    ) : (
-                      <div className="w-6 h-6 mr-3"></div>
-                    )}
-                    <span className={`${loadingSteps.summarizing.status === 'done' ? 'text-gray-500' : 'text-gray-700'} font-medium`}>
-                      Retrieving article summary...
-                    </span>
-                  </div>
-                  
-                  {/* Step 4: Generating keywords */}
-                  <div className="flex items-center">
-                    {loadingSteps.generating.status === 'loading' ? (
-                      <div className="w-6 h-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mr-3"></div>
-                    ) : loadingSteps.generating.status === 'done' ? (
-                      <div className="text-green-500 mr-3">✅</div>
-                    ) : (
-                      <div className="w-6 h-6 mr-3"></div>
-                    )}
-                    <span className={`${loadingSteps.generating.status === 'done' ? 'text-gray-500' : 'text-gray-700'} font-medium`}>
-                      Generating relevant keywords...
-                    </span>
-                  </div>
-                  
-                  {/* Step 5: Searching for similar articles */}
-                  <div className="flex items-center">
-                    {loadingSteps.searchingSimilar.status === 'loading' ? (
-                      <div className="w-6 h-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mr-3"></div>
-                    ) : loadingSteps.searchingSimilar.status === 'done' ? (
-                      <div className="text-green-500 mr-3">✅</div>
-                    ) : (
-                      <div className="w-6 h-6 mr-3"></div>
-                    )}
-                    <span className={`${loadingSteps.searchingSimilar.status === 'done' ? 'text-gray-500' : 'text-gray-700'} font-medium`}>
-                      {relatedResearch.searchKeywords && relatedResearch.searchKeywords.length > 0 
-                        ? `Retrieving similar articles using the following keywords: ${relatedResearch.searchKeywords.join(', ')}` 
-                        : 'Searching for similar articles...'}
-                    </span>
-                  </div>
+                  <p className="text-center text-gray-600">
+                    Loading article summary...
+                  </p>
                 </div>
                 
                 <div className="text-sm text-gray-500 text-center mt-4">
@@ -2185,23 +2182,41 @@ export default function ArticleSummaryPage() {
             <div className="bg-white py-4 px-6">
               <h3 className="text-lg font-medium text-blue-900">Summary</h3>
               <p className="text-sm text-gray-500">
-                Raw summary text (parsing failed)
+                {parseError ? "We couldn't parse the AI response as structured data, but you can still read it below" : "Raw summary text"}
               </p>
             </div>
             <div className="bg-white px-6 py-5">
-              <pre className="whitespace-pre-wrap text-sm bg-gray-50 p-4 rounded-md border border-gray-200">
-                {streamedText}
-              </pre>
-              
               {parseError && (
-                <div className="mt-4 bg-red-50 text-red-600 p-3 rounded-md border border-red-200">
-                  {parseError}
+                <div className="mb-4 bg-amber-50 text-amber-700 p-4 rounded-md border border-amber-200">
+                  <p className="font-medium mb-1">Note:</p>
+                  <p>{parseError}</p>
                 </div>
               )}
+              
+              <div className="prose prose-blue max-w-none">
+                {streamedText.split('###').map((section, index) => {
+                  if (index === 0) return null;
+                  
+                  const lines = section.trim().split('\n');
+                  const heading = lines[0];
+                  const content = lines.slice(1).join('\n');
+                  
+                  return (
+                    <div key={index} className="mb-6">
+                      <h3 className="text-lg font-medium text-blue-800 mb-2">
+                        {heading}
+                      </h3>
+                      <div className="whitespace-pre-wrap text-gray-700">
+                        {content}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 } 

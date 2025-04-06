@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -15,6 +15,7 @@ import {
   LucideMoreHorizontal,
   LucideClock,
   LucideCompass,
+  CheckCircle2,
 } from "lucide-react"
 import {
   DropdownMenu,
@@ -26,10 +27,89 @@ import {
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/contexts/auth-context"
 
+// Loading Overlay Component
+const LoadingOverlay = ({ 
+  isVisible, 
+  currentStep, 
+  completedSteps, 
+  keywords 
+}: { 
+  isVisible: boolean; 
+  currentStep: string; 
+  completedSteps: string[];
+  keywords?: string[];
+}) => {
+  if (!isVisible) return null;
+
+  const steps = [
+    "retrievingContent",
+    "generatingSummary",
+    "extractingKeywords",
+    "searchingSimilarArticles",
+    "assessingResearch"
+  ];
+
+  const stepLabels: Record<string, string> = {
+    retrievingContent: "Retrieving article content...",
+    generatingSummary: "Generating summary...",
+    extractingKeywords: "Extracting relevant keywords...",
+    searchingSimilarArticles: "Searching for similar articles...",
+    assessingResearch: "Assessing supporting and contradictory research..."
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+      <div className="bg-white rounded-lg shadow-xl max-w-xl w-full mx-4 p-6">
+        <h3 className="text-xl font-semibold text-gray-900 mb-4">Analyzing Article</h3>
+        <div className="space-y-6">
+          {steps.map((step, index) => {
+            // Only show steps that are in progress or completed
+            const shouldShow = steps.indexOf(currentStep) >= index || completedSteps.includes(step);
+            if (!shouldShow) return null;
+
+            const isCompleted = completedSteps.includes(step);
+            const isCurrent = currentStep === step;
+
+            return (
+              <div key={step} className="flex items-center gap-3">
+                {isCompleted ? (
+                  <CheckCircle2 className="h-6 w-6 text-green-500 flex-shrink-0" />
+                ) : isCurrent ? (
+                  <div className="h-6 w-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin flex-shrink-0"></div>
+                ) : (
+                  <div className="h-6 w-6 flex-shrink-0"></div>
+                )}
+                <div className="flex-1">
+                  <p className={`${isCompleted ? 'text-gray-600' : 'text-gray-900 font-medium'}`}>
+                    {stepLabels[step]}
+                  </p>
+                  {step === 'searchingSimilarArticles' && keywords && keywords.length > 0 && (
+                    <p className="text-sm text-gray-500 mt-1">
+                      Based on the following keywords: {keywords.join(', ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function DashboardPage() {
   const [url, setUrl] = useState('')
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
   const router = useRouter()
   const { user } = useAuth()
+  
+  // Loading overlay state
+  const [showLoadingOverlay, setShowLoadingOverlay] = useState(false)
+  const [currentStep, setCurrentStep] = useState<string>("retrievingContent")
+  const [completedSteps, setCompletedSteps] = useState<string[]>([])
+  const [extractedKeywords, setExtractedKeywords] = useState<string[]>([])
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
   
   // Get the first name from user metadata or fallback to email parsing
   const firstName = user?.user_metadata?.first_name || 
@@ -37,14 +117,223 @@ export default function DashboardPage() {
       ? user.email.split('@')[0].split('.')[0].charAt(0).toUpperCase() + user.email.split('@')[0].split('.')[0].slice(1) 
       : "there")
 
-  const handleAnalyzeSubmit = (e: React.FormEvent) => {
+  const updateLoadingStep = (step: string, isComplete: boolean = false) => {
+    if (isComplete) {
+      setCompletedSteps(prev => [...prev, step]);
+      // Move to the next step
+      const steps = ["retrievingContent", "generatingSummary", "extractingKeywords", "searchingSimilarArticles", "assessingResearch"];
+      const currentIndex = steps.indexOf(step);
+      if (currentIndex < steps.length - 1) {
+        setCurrentStep(steps[currentIndex + 1]);
+      }
+    } else {
+      setCurrentStep(step);
+    }
+  };
+
+  const handleAnalyzeSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!url.trim()) return
 
-    // Encode the URL and navigate to the demo page with the URL as a query parameter
-    const encodedUrl = encodeURIComponent(url)
-    router.push(`/demo?url=${encodedUrl}`)
+    setIsAnalyzing(true)
+    setShowLoadingOverlay(true)
+    setCurrentStep("retrievingContent")
+    setCompletedSteps([])
+    setExtractedKeywords([])
+    setAnalysisError(null)
+    
+    try {
+      // Store the URL in session storage so we can access it on the article-summary page
+      sessionStorage.setItem('articleUrl', url)
+      
+      // Call the API to start the analysis process
+      const response = await fetch('/api/summarize-article', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url: url }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to start analysis: ${response.statusText}`);
+      }
+      
+      // Mark content retrieval as complete
+      updateLoadingStep("retrievingContent", true);
+      
+      // Start summary generation
+      updateLoadingStep("generatingSummary");
+      
+      // Content type check for streaming or JSON response
+      const contentType = response.headers.get('content-type');
+      
+      if (contentType && (contentType.includes('text/event-stream') || contentType.includes('text/plain'))) {
+        // Handle streaming response
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        
+        if (!reader) {
+          throw new Error('Failed to read response stream');
+        }
+        
+        let accumulatedText = '';
+        
+        while (true) {
+          const { done, value } = await reader.read();
+          
+          if (done) {
+            break;
+          }
+          
+          const chunk = decoder.decode(value, { stream: true });
+          accumulatedText += chunk;
+          
+          // Try to parse keywords if available
+          try {
+            // Simple regex to extract keywords from the response
+            const keywordsMatch = accumulatedText.match(/keywords:\s*\[(.*?)\]/i);
+            if (keywordsMatch && keywordsMatch[1]) {
+              const keywordsStr = keywordsMatch[1];
+              const keywords = keywordsStr.split(',').map(k => k.trim().replace(/["']/g, ''));
+              
+              if (keywords.length > 0) {
+                setExtractedKeywords(keywords);
+                updateLoadingStep("generatingSummary", true);
+                updateLoadingStep("extractingKeywords", true);
+                updateLoadingStep("searchingSimilarArticles");
+                
+                // Call API to fetch related research
+                await fetchRelatedResearch(keywords);
+                
+                // Set flag to indicate article is preprocessed
+                sessionStorage.setItem('articlePreprocessed', 'true');
+                
+                // All steps complete, redirect to article summary page
+                router.push(`/dashboard/article-summary?url=${encodeURIComponent(url)}`);
+                return;
+              }
+            }
+          } catch (error) {
+            console.error('Error parsing keywords:', error);
+          }
+        }
+        
+        // If we reach here, we've completed reading the stream
+        updateLoadingStep("generatingSummary", true);
+        updateLoadingStep("extractingKeywords", true);
+        updateLoadingStep("searchingSimilarArticles", true);
+        updateLoadingStep("assessingResearch", true);
+        
+        // Set flag to indicate article is preprocessed
+        sessionStorage.setItem('articlePreprocessed', 'true');
+        
+        // Redirect to article summary page
+        router.push(`/dashboard/article-summary?url=${encodeURIComponent(url)}`);
+      } else {
+        // Handle JSON response
+        const data = await response.json();
+        
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        
+        // Mark summary generation as complete
+        updateLoadingStep("generatingSummary", true);
+        
+        // If we have keywords, use them
+        if (data.keywords && data.keywords.length > 0) {
+          setExtractedKeywords(data.keywords);
+          updateLoadingStep("extractingKeywords", true);
+          
+          // Fetch related research
+          updateLoadingStep("searchingSimilarArticles");
+          await fetchRelatedResearch(data.keywords);
+        } else {
+          // Mark remaining steps as complete
+          updateLoadingStep("extractingKeywords", true);
+          updateLoadingStep("searchingSimilarArticles", true);
+          updateLoadingStep("assessingResearch", true);
+        }
+        
+        // Try to cache the result for the article summary page
+        try {
+          sessionStorage.setItem('articleResult', JSON.stringify(data));
+        } catch (error) {
+          console.error('Error caching result:', error);
+        }
+        
+        // Set flag to indicate article is preprocessed
+        sessionStorage.setItem('articlePreprocessed', 'true');
+        
+        // Redirect to article summary page
+        router.push(`/dashboard/article-summary?url=${encodeURIComponent(url)}`);
+      }
+    } catch (error: unknown) {
+      console.error('Error analyzing article:', error);
+      setAnalysisError(error instanceof Error ? error.message : 'An unexpected error occurred');
+      
+      // Mark all steps as complete after a delay
+      setTimeout(() => {
+        setShowLoadingOverlay(false);
+        setIsAnalyzing(false);
+      }, 1000);
+    }
   }
+
+  // Add a function to fetch related research
+  const fetchRelatedResearch = async (keywords: string[]) => {
+    try {
+      updateLoadingStep("searchingSimilarArticles");
+      
+      // Call the API to fetch related research
+      const response = await fetch('/api/semantic-scholar-search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          keywords,
+          url,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch related research: ${response.statusText}`);
+      }
+
+      // Get the response data
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      // Store related research results in session storage
+      try {
+        const relatedResearchData = {
+          supporting: data.supporting || [],
+          contradictory: data.contradictory || [],
+          totalFound: data.totalFound || 0,
+          searchKeywords: keywords,
+        };
+        
+        sessionStorage.setItem('relatedResearchResults', JSON.stringify(relatedResearchData));
+      } catch (cacheError) {
+        console.error('Error caching related research results:', cacheError);
+      }
+
+      // Mark research assessment as complete
+      updateLoadingStep("searchingSimilarArticles", true);
+      updateLoadingStep("assessingResearch", true);
+    } catch (error) {
+      console.error('Error fetching related research:', error);
+      
+      // Still mark steps as complete to proceed with redirection
+      updateLoadingStep("searchingSimilarArticles", true);
+      updateLoadingStep("assessingResearch", true);
+    }
+  };
 
   return (
     <>
@@ -52,6 +341,14 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
         <p className="text-gray-600">Hi {firstName}. Here's your research overview.</p>
       </div>
+
+      {/* Loading Overlay */}
+      <LoadingOverlay 
+        isVisible={showLoadingOverlay} 
+        currentStep={currentStep} 
+        completedSteps={completedSteps} 
+        keywords={extractedKeywords}
+      />
 
       {/* Research Activity Summary */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -114,7 +411,7 @@ export default function DashboardPage() {
       </div>
 
       {/* URL Input for New Research */}
-      <Card className="mb-8 border border-gray-200 shadow-sm">
+      <Card className="mb-8 border border-gray-200 shadow-sm bg-white">
         <CardHeader className="pb-2">
           <CardTitle className="text-xl font-bold">Analyze New Research</CardTitle>
           <CardDescription>Enter a URL to a scientific article to get AI-powered insights</CardDescription>
@@ -128,14 +425,19 @@ export default function DashboardPage() {
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               required
+              disabled={isAnalyzing}
             />
             <Button 
               type="submit" 
               className="bg-[#1e3a6d] hover:bg-[#0f2a4d] text-white px-6"
+              disabled={isAnalyzing}
             >
               Analyze <LucideArrowRight className="ml-2 h-4 w-4" />
             </Button>
           </form>
+          {analysisError && (
+            <p className="mt-2 text-sm text-red-600">{analysisError}</p>
+          )}
         </CardContent>
       </Card>
 
