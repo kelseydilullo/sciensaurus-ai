@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/contexts/auth-context"
+import ArticleSummaryContent from "@/components/article-summary-content"
 
 // Loading Overlay Component
 const LoadingOverlay = ({ 
@@ -98,6 +99,24 @@ const LoadingOverlay = ({
   );
 };
 
+// Define interfaces for our data
+interface ArticleSummary {
+  id?: string;
+  url: string;
+  title: string;
+  source?: string;
+  publish_date?: string;
+  summary?: string;
+  visual_summary?: Array<{emoji: string; point: string}>;
+  keywords?: string[];
+  study_metadata?: any;
+  related_research?: any;
+  created_at?: string;
+  updated_at?: string;
+  is_bookmarked?: boolean;
+  view_count?: number;
+}
+
 export default function DashboardPage() {
   const [url, setUrl] = useState('')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -111,11 +130,130 @@ export default function DashboardPage() {
   const [extractedKeywords, setExtractedKeywords] = useState<string[]>([])
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   
+  // New state for managing article analysis
+  const [showArticleSummary, setShowArticleSummary] = useState(false)
+  const [articleData, setArticleData] = useState<any>(null)
+  const [relatedResearch, setRelatedResearch] = useState<{
+    supporting: any[];
+    contradictory: any[];
+    totalFound: number;
+    searchKeywords: string[];
+    error?: string;
+  }>({
+    supporting: [],
+    contradictory: [],
+    totalFound: 0,
+    searchKeywords: []
+  })
+  
+  // State for user's recent articles from Supabase
+  const [userArticles, setUserArticles] = useState<ArticleSummary[]>([]);
+  const [loadingArticles, setLoadingArticles] = useState(true);
+  const [articlesError, setArticlesError] = useState<string | null>(null);
+  
   // Get the first name from user metadata or fallback to email parsing
   const firstName = user?.user_metadata?.first_name || 
     (user?.email 
       ? user.email.split('@')[0].split('.')[0].charAt(0).toUpperCase() + user.email.split('@')[0].split('.')[0].slice(1) 
       : "there")
+
+  // Inside the component, add a state for notification
+  const [notification, setNotification] = useState<{
+    show: boolean;
+    message: string;
+  } | null>(null);
+
+  // Fetch user's articles from Supabase when the component mounts or user changes
+  useEffect(() => {
+    if (user?.id) {
+      fetchUserArticles();
+    }
+  }, [user]);
+
+  // Function to fetch user's articles from Supabase
+  const fetchUserArticles = async () => {
+    setLoadingArticles(true);
+    setArticlesError(null);
+    
+    try {
+      const response = await fetch('/api/get-user-articles');
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch articles: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setUserArticles(data.articles || []);
+      } else {
+        throw new Error(data.error || 'Failed to fetch articles');
+      }
+    } catch (error) {
+      console.error('Error fetching user articles:', error);
+      setArticlesError(error instanceof Error ? error.message : 'An error occurred while fetching your articles');
+    } finally {
+      setLoadingArticles(false);
+    }
+  };
+
+  // Add this function after fetchUserArticles and before formatDate
+  const toggleBookmark = async (articleId: string) => {
+    try {
+      // Call the API to toggle bookmark status
+      const response = await fetch('/api/toggle-bookmark', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ articleSummaryId: articleId }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to toggle bookmark: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        // Update the local state to reflect the change
+        setUserArticles(prevArticles => 
+          prevArticles.map(article => 
+            article.id === articleId 
+              ? { ...article, is_bookmarked: data.isBookmarked } 
+              : article
+          )
+        );
+      } else {
+        throw new Error(data.error || 'Failed to toggle bookmark');
+      }
+    } catch (error) {
+      console.error('Error toggling bookmark:', error);
+      // Optionally show an error notification to the user
+    }
+  };
+
+  // Format a date for display
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return '';
+    
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffTime = Math.abs(now.getTime() - date.getTime());
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) {
+      return 'Today';
+    } else if (diffDays === 1) {
+      return 'Yesterday';
+    } else if (diffDays < 7) {
+      return `${diffDays} days ago`;
+    } else if (diffDays < 30) {
+      return `${Math.floor(diffDays / 7)} weeks ago`;
+    } else {
+      return `${Math.floor(diffDays / 30)} months ago`;
+    }
+  };
 
   const updateLoadingStep = (step: string, isComplete: boolean = false) => {
     if (isComplete) {
@@ -131,106 +269,67 @@ export default function DashboardPage() {
     }
   };
 
+  // Handle analyzing a URL
   const handleAnalyzeSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!url.trim()) return
-
-    setIsAnalyzing(true)
-    setShowLoadingOverlay(true)
-    setCurrentStep("retrievingContent")
-    setCompletedSteps([])
-    setExtractedKeywords([])
-    setAnalysisError(null)
+    e.preventDefault();
+    
+    if (!url || isAnalyzing) return;
+    
+    // Reset states
+    setIsAnalyzing(true);
+    setShowLoadingOverlay(true);
+    setAnalysisError('');
+    setCurrentStep("retrievingContent");
+    setCompletedSteps([]);
+    setExtractedKeywords([]);
+    setArticleData(null);
+    setRelatedResearch({
+      supporting: [],
+      contradictory: [],
+      totalFound: 0,
+      searchKeywords: []
+    });
+    
+    // Hide article summary if it was showing
+    setShowArticleSummary(false);
     
     try {
-      // Store the URL in session storage so we can access it on the article-summary page
-      sessionStorage.setItem('articleUrl', url)
+      // Show a notification that articles are automatically saved
+      setNotification({
+        show: true,
+        message: "Your article will be automatically saved to your collection after analysis."
+      });
       
-      // Call the API to start the analysis process
+      // Clear notification after 4 seconds
+      setTimeout(() => {
+        setNotification(null);
+      }, 4000);
+      
+      // Call the API to analyze the article
       const response = await fetch('/api/summarize-article', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ url: url }),
+        body: JSON.stringify({ url }),
       });
-
+      
       if (!response.ok) {
-        throw new Error(`Failed to start analysis: ${response.statusText}`);
+        throw new Error(`Failed to fetch article: ${response.statusText}`);
       }
       
-      // Mark content retrieval as complete
+      // Content retrieved successfully
       updateLoadingStep("retrievingContent", true);
-      
-      // Start summary generation
       updateLoadingStep("generatingSummary");
       
-      // Content type check for streaming or JSON response
+      // Check content type to determine how to process the response
       const contentType = response.headers.get('content-type');
       
-      if (contentType && (contentType.includes('text/event-stream') || contentType.includes('text/plain'))) {
-        // Handle streaming response
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-        
-        if (!reader) {
-          throw new Error('Failed to read response stream');
-        }
-        
-        let accumulatedText = '';
-        
-        while (true) {
-          const { done, value } = await reader.read();
-          
-          if (done) {
-            break;
-          }
-          
-          const chunk = decoder.decode(value, { stream: true });
-          accumulatedText += chunk;
-          
-          // Try to parse keywords if available
-          try {
-            // Simple regex to extract keywords from the response
-            const keywordsMatch = accumulatedText.match(/keywords:\s*\[(.*?)\]/i);
-            if (keywordsMatch && keywordsMatch[1]) {
-              const keywordsStr = keywordsMatch[1];
-              const keywords = keywordsStr.split(',').map(k => k.trim().replace(/["']/g, ''));
-              
-              if (keywords.length > 0) {
-                setExtractedKeywords(keywords);
-                updateLoadingStep("generatingSummary", true);
-                updateLoadingStep("extractingKeywords", true);
-                updateLoadingStep("searchingSimilarArticles");
-                
-                // Call API to fetch related research
-                await fetchRelatedResearch(keywords);
-                
-                // Set flag to indicate article is preprocessed
-                sessionStorage.setItem('articlePreprocessed', 'true');
-                
-                // All steps complete, redirect to article summary page
-                router.push(`/dashboard/article-summary?url=${encodeURIComponent(url)}`);
-                return;
-              }
-            }
-          } catch (error) {
-            console.error('Error parsing keywords:', error);
-          }
-        }
-        
-        // If we reach here, we've completed reading the stream
-        updateLoadingStep("generatingSummary", true);
-        updateLoadingStep("extractingKeywords", true);
-        updateLoadingStep("searchingSimilarArticles", true);
-        updateLoadingStep("assessingResearch", true);
-        
-        // Set flag to indicate article is preprocessed
-        sessionStorage.setItem('articlePreprocessed', 'true');
-        
-        // Redirect to article summary page
-        router.push(`/dashboard/article-summary?url=${encodeURIComponent(url)}`);
-      } else {
+      // Handle different content types appropriately
+      let keywords: string[] = [];
+      let articleResult: any = null;
+      
+      if (contentType && contentType.includes('application/json')) {
         // Handle JSON response
         const data = await response.json();
         
@@ -238,55 +337,121 @@ export default function DashboardPage() {
           throw new Error(data.error);
         }
         
-        // Mark summary generation as complete
-        updateLoadingStep("generatingSummary", true);
+        // Store the data
+        articleResult = data;
         
-        // If we have keywords, use them
+        // Extract keywords if available
         if (data.keywords && data.keywords.length > 0) {
-          setExtractedKeywords(data.keywords);
+          keywords = data.keywords;
+        }
+      } else if (contentType && (contentType.includes('text/plain') || contentType.includes('text/markdown') || contentType.includes('text/event-stream'))) {
+        // Handle text/markdown/stream response
+        const text = await response.text();
+        
+        // Store the text response
+        articleResult = { rawText: text };
+        
+        // Try to extract keywords using regex from markdown format
+        const keywordsMatch = text.match(/### Keywords:\s*\n([\s\S]*?)(?=###|$)/i);
+        if (keywordsMatch && keywordsMatch[1]) {
+          keywords = keywordsMatch[1].split(',')
+            .map(k => k.trim())
+            .filter(k => k.length > 0);
+        }
+      }
+      
+      updateLoadingStep("generatingSummary", true);
+      
+      // Store the article data
+      setArticleData(articleResult);
+      
+      // Use keywords to find related research
+      if (keywords.length > 0) {
+        setExtractedKeywords(keywords);
+        try {
+          // Now fetch related research
+          updateLoadingStep("generatingSummary", true);
           updateLoadingStep("extractingKeywords", true);
-          
-          // Fetch related research
           updateLoadingStep("searchingSimilarArticles");
-          await fetchRelatedResearch(data.keywords);
-        } else {
-          // Mark remaining steps as complete
-          updateLoadingStep("extractingKeywords", true);
+          
+          const researchResponse = await fetch('/api/semantic-scholar-search', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              keywords,
+              url,
+            }),
+          });
+  
+          if (!researchResponse.ok) {
+            const errorText = await researchResponse.text();
+            throw new Error(`Failed to fetch related research: ${researchResponse.statusText || errorText}`);
+          }
+  
+          const researchData = await researchResponse.json();
+          
+          if (researchData.error) {
+            throw new Error(researchData.error);
+          }
+          
+          // Store the related research
+          setRelatedResearch({
+            supporting: researchData.supporting || [],
+            contradictory: researchData.contradictory || [],
+            totalFound: researchData.totalFound || 0,
+            searchKeywords: keywords,
+          });
+          
+          updateLoadingStep("searchingSimilarArticles", true);
+          updateLoadingStep("assessingResearch", true);
+        } catch (researchError: any) {
+          console.error('Error fetching related research:', researchError);
+          
+          // Store error but continue with article display
+          setRelatedResearch(prev => ({
+            ...prev,
+            error: researchError.message || 'Error fetching related research',
+            searchKeywords: keywords,
+          }));
+          
+          // Mark as complete even with error to proceed
           updateLoadingStep("searchingSimilarArticles", true);
           updateLoadingStep("assessingResearch", true);
         }
-        
-        // Try to cache the result for the article summary page
-        try {
-          sessionStorage.setItem('articleResult', JSON.stringify(data));
-        } catch (error) {
-          console.error('Error caching result:', error);
-        }
-        
-        // Set flag to indicate article is preprocessed
-        sessionStorage.setItem('articlePreprocessed', 'true');
-        
-        // Redirect to article summary page
-        router.push(`/dashboard/article-summary?url=${encodeURIComponent(url)}`);
       }
-    } catch (error: unknown) {
-      console.error('Error analyzing article:', error);
-      setAnalysisError(error instanceof Error ? error.message : 'An unexpected error occurred');
       
-      // Mark all steps as complete after a delay
+      // Set a short timeout to ensure the loading overlay shows completed state before hiding
       setTimeout(() => {
         setShowLoadingOverlay(false);
         setIsAnalyzing(false);
+        setShowArticleSummary(true);
       }, 1000);
+      
+    } catch (error) {
+      console.error('Error analyzing article:', error);
+      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
+      setAnalysisError(errorMessage);
+      setShowLoadingOverlay(false);
+      setIsAnalyzing(false);
     }
-  }
+  };
+  
+  // Function to return to dashboard from article summary
+  const handleBackToDashboard = () => {
+    setShowArticleSummary(false);
+    setArticleData(null);
+    setUrl('');
+  };
 
-  // Add a function to fetch related research
+  // Add a function to fetch related research (for retry functionality)
   const fetchRelatedResearch = async (keywords: string[]) => {
+    if (!keywords || keywords.length === 0) return;
+    
     try {
       updateLoadingStep("searchingSimilarArticles");
       
-      // Call the API to fetch related research
       const response = await fetch('/api/semantic-scholar-search', {
         method: 'POST',
         headers: {
@@ -299,37 +464,37 @@ export default function DashboardPage() {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch related research: ${response.statusText}`);
+        const errorText = await response.text();
+        throw new Error(`Failed to fetch related research: ${response.statusText || errorText}`);
       }
 
-      // Get the response data
       const data = await response.json();
       
       if (data.error) {
         throw new Error(data.error);
       }
       
-      // Store related research results in session storage
-      try {
-        const relatedResearchData = {
-          supporting: data.supporting || [],
-          contradictory: data.contradictory || [],
-          totalFound: data.totalFound || 0,
-          searchKeywords: keywords,
-        };
-        
-        sessionStorage.setItem('relatedResearchResults', JSON.stringify(relatedResearchData));
-      } catch (cacheError) {
-        console.error('Error caching related research results:', cacheError);
-      }
-
-      // Mark research assessment as complete
+      // Store the related research
+      setRelatedResearch({
+        supporting: data.supporting || [],
+        contradictory: data.contradictory || [],
+        totalFound: data.totalFound || 0,
+        searchKeywords: keywords,
+      });
+      
       updateLoadingStep("searchingSimilarArticles", true);
       updateLoadingStep("assessingResearch", true);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching related research:', error);
       
-      // Still mark steps as complete to proceed with redirection
+      // Store error but continue with article display
+      setRelatedResearch(prev => ({
+        ...prev,
+        error: error.message || 'Error fetching related research',
+        searchKeywords: keywords,
+      }));
+      
+      // Mark as complete even with error to proceed
       updateLoadingStep("searchingSimilarArticles", true);
       updateLoadingStep("assessingResearch", true);
     }
@@ -337,12 +502,7 @@ export default function DashboardPage() {
 
   return (
     <>
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-gray-600">Hi {firstName}. Here's your research overview.</p>
-      </div>
-
-      {/* Loading Overlay */}
+      {/* Loading Overlay - keep this visible during analysis */}
       <LoadingOverlay 
         isVisible={showLoadingOverlay} 
         currentStep={currentStep} 
@@ -350,317 +510,354 @@ export default function DashboardPage() {
         keywords={extractedKeywords}
       />
 
-      {/* Research Activity Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        {/* Articles Analyzed */}
-        <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
-          <CardHeader className="pb-2">
-            <p className="text-sm font-medium text-gray-700">Articles Analyzed</p>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="flex justify-between items-center">
-              <h3 className="text-3xl font-bold text-gray-900">24</h3>
-              <div className="h-10 w-10 rounded-full flex items-center justify-center bg-blue-100">
-                <LucideFileText className="h-5 w-5 text-blue-600" />
-              </div>
-            </div>
-            <div className="mt-2 text-xs text-gray-500 flex items-center">
-              <span className="text-green-500 font-medium">+12% </span>
-              <span className="ml-1">from last month</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Research Interests */}
-        <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
-          <CardHeader className="pb-2">
-            <p className="text-sm font-medium text-gray-700">Research Interests</p>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="flex justify-between items-center">
-              <h3 className="text-3xl font-bold text-gray-900">8</h3>
-              <div className="h-10 w-10 rounded-full flex items-center justify-center bg-purple-100">
-                <LucideCompass className="h-5 w-5 text-purple-600" />
-              </div>
-            </div>
-            <div className="mt-2 text-xs text-gray-500 flex items-center">
-              <span className="text-green-500 font-medium">+3 </span>
-              <span className="ml-1">new interests this month</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Saved Articles */}
-        <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
-          <CardHeader className="pb-2">
-            <p className="text-sm font-medium text-gray-700">Saved Articles</p>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="flex justify-between items-center">
-              <h3 className="text-3xl font-bold text-gray-900">12</h3>
-              <div className="h-10 w-10 rounded-full flex items-center justify-center bg-green-100">
-                <LucideBookmark className="h-5 w-5 text-green-600" />
-              </div>
-            </div>
-            <div className="mt-2 text-xs text-gray-500 flex items-center">
-              <LucideClock className="h-3 w-3 mr-1" />
-              <span>Last saved 2 days ago</span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* URL Input for New Research */}
-      <Card className="mb-8 border border-gray-200 shadow-sm bg-white">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-xl font-bold">Analyze New Research</CardTitle>
-          <CardDescription>Enter a URL to a scientific article to get AI-powered insights</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleAnalyzeSubmit} className="flex w-full space-x-2">
-            <Input 
-              type="url" 
-              placeholder="Paste article URL here..." 
-              className="flex-1 border-gray-300 focus:border-[#1e3a6d] focus:ring-[#1e3a6d]"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              required
-              disabled={isAnalyzing}
-            />
+      {/* Conditionally render either the dashboard or the article summary */}
+      {showArticleSummary && articleData ? (
+        <div className="article-summary-content">
+          {/* Back button to return to dashboard */}
+          <div className="mb-6">
             <Button 
-              type="submit" 
-              className="bg-[#1e3a6d] hover:bg-[#0f2a4d] text-white px-6"
-              disabled={isAnalyzing}
+              variant="ghost" 
+              className="flex items-center text-gray-600 hover:text-gray-900"
+              onClick={handleBackToDashboard}
             >
-              Analyze <LucideArrowRight className="ml-2 h-4 w-4" />
+              <svg 
+                xmlns="http://www.w3.org/2000/svg" 
+                className="h-4 w-4 mr-1" 
+                fill="none" 
+                viewBox="0 0 24 24" 
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              Back to Dashboard
             </Button>
-          </form>
-          {analysisError && (
-            <p className="mt-2 text-sm text-red-600">{analysisError}</p>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Recent Research */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold text-gray-900">Your Recent Articles</h2>
-          <Link href="/dashboard/research-interests">
-            <Button variant="outline" size="sm" className="text-[#1e3a6d] border-[#1e3a6d] hover:bg-[#1e3a6d]/10">
-              View All <LucideChevronRight className="ml-1 h-4 w-4" />
-            </Button>
-          </Link>
-        </div>
-
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {recentArticles.slice(0, 3).map((article, index) => (
-            <div key={index}>
-              <Card className="overflow-hidden hover:shadow-md transition-shadow h-full border border-gray-200">
-                <CardHeader className="p-4 pb-2 bg-gray-50 border-b">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <CardTitle className="text-base line-clamp-2">{article.title}</CardTitle>
-                      <CardDescription className="text-xs mt-1">
-                        {article.journal} • {article.date}
-                      </CardDescription>
-                    </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <LucideMoreHorizontal className="h-4 w-4" />
-                          <span className="sr-only">More</span>
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                        <DropdownMenuItem>
-                          <LucideBookmark className="mr-2 h-4 w-4" />
-                          <span>Save to collection</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <LucideFileText className="mr-2 h-4 w-4" />
-                          <span>View full analysis</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem className="text-red-600">
-                          <span>Remove from history</span>
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-4 pt-3">
-                  <p className="text-sm text-gray-600 line-clamp-2 mb-3">{article.summary}</p>
-                  <div className="flex flex-wrap gap-1">
-                    {article.keywords.slice(0, 3).map((keyword, idx) => (
-                      <Link href={`/dashboard/research-topic/1`} key={idx}>
-                        <Badge
-                          variant="outline"
-                          className="bg-blue-50 text-[#1e3a6d] text-xs hover:bg-blue-100 cursor-pointer"
-                        >
-                          {keyword}
-                        </Badge>
-                      </Link>
-                    ))}
-                    {article.keywords.length > 3 && (
-                      <Badge variant="outline" className="bg-gray-100 text-gray-600 text-xs">
-                        +{article.keywords.length - 3} more
-                      </Badge>
-                    )}
-                  </div>
-                </CardContent>
-                <CardFooter className="p-4 pt-0 flex justify-between items-center">
-                  <div className="text-xs text-gray-500">
-                    <LucideCalendar className="inline h-3 w-3 mr-1" />
-                    Analyzed {article.analyzedDate}
-                  </div>
-                  <Link href="/dashboard/analysis">
-                    <Button variant="ghost" size="sm" className="h-8 text-[#1e3a6d] hover:bg-[#1e3a6d]/10">
-                      View
-                    </Button>
-                  </Link>
-                </CardFooter>
-              </Card>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Trending Research Topics */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold text-gray-900">Trending Research Topics</h2>
-        </div>
-
-        <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
-          <div className="flex flex-wrap gap-2">
-            {trendingTopics.map((topic, index) => (
-              <Link href={`/dashboard/research-topic/1`} key={index}>
-                <Badge
-                  className={`text-sm py-1.5 px-3 cursor-pointer ${topic.isHot ? "bg-red-100 text-red-800 hover:bg-red-200" : "bg-blue-50 text-[#1e3a6d] hover:bg-blue-100"}`}
-                >
-                  {topic.name}
-                  {topic.isHot && <span className="ml-1">🔥</span>}
-                </Badge>
-              </Link>
-            ))}
           </div>
+          
+          {/* Article Summary Content - We'll implement the ArticleSummaryContent component next */}
+          <ArticleSummaryContent 
+            articleData={articleData} 
+            relatedResearch={relatedResearch}
+            url={url}
+            retryRelatedResearch={() => {
+              if (extractedKeywords.length > 0) {
+                // Implement retry functionality for related research
+                fetchRelatedResearch(extractedKeywords);
+              }
+            }}
+          />
         </div>
-      </div>
+      ) : (
+        /* Standard Dashboard UI */
+        <div className="dashboard-content">
+          <div className="mb-8">
+            <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+            <p className="text-gray-600">Hi {firstName}. Here's your research overview.</p>
+          </div>
 
-      {/* Suggested Articles */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold text-gray-900">Suggested For You</h2>
-          <Link href="/dashboard/suggestions">
-            <Button variant="ghost" size="sm" className="text-[#1e3a6d] hover:bg-[#1e3a6d]/10">
-              More Suggestions
-            </Button>
-          </Link>
-        </div>
+          {/* Research Activity Summary */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            {/* Articles Analyzed */}
+            <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+              <CardHeader className="pb-2">
+                <p className="text-sm font-medium text-gray-700">Articles Analyzed</p>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-3xl font-bold text-gray-900">24</h3>
+                  <div className="h-10 w-10 rounded-full flex items-center justify-center bg-blue-100">
+                    <LucideFileText className="h-5 w-5 text-blue-600" />
+                  </div>
+                </div>
+                <div className="mt-2 text-xs text-gray-500 flex items-center">
+                  <span className="text-green-500 font-medium">+12% </span>
+                  <span className="ml-1">from last month</span>
+                </div>
+              </CardContent>
+            </Card>
 
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {suggestedArticles.slice(0, 3).map((article, index) => (
-            <div key={index}>
-              <Card className="overflow-hidden hover:shadow-md transition-shadow h-full border border-gray-200">
-                <CardHeader className="p-4 pb-2">
-                  <div>
-                    <CardTitle className="text-base line-clamp-2">{article.title}</CardTitle>
-                    <CardDescription className="text-xs mt-1">
-                      {article.journal} • {article.date}
-                    </CardDescription>
+            {/* Research Interests */}
+            <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+              <CardHeader className="pb-2">
+                <p className="text-sm font-medium text-gray-700">Research Interests</p>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-3xl font-bold text-gray-900">8</h3>
+                  <div className="h-10 w-10 rounded-full flex items-center justify-center bg-purple-100">
+                    <LucideCompass className="h-5 w-5 text-purple-600" />
                   </div>
-                </CardHeader>
-                <CardContent className="p-4 pt-2">
-                  <p className="text-sm text-gray-600 line-clamp-2 mb-3">{article.summary}</p>
-                  <div className="flex flex-wrap gap-1 mb-3">
-                    {article.keywords.slice(0, 3).map((keyword, idx) => (
-                      <Badge
-                        key={idx}
-                        variant="outline"
-                        className="bg-blue-50 text-[#1e3a6d] text-xs hover:bg-blue-100"
-                      >
-                        {keyword}
-                      </Badge>
-                    ))}
+                </div>
+                <div className="mt-2 text-xs text-gray-500 flex items-center">
+                  <span className="text-green-500 font-medium">+3 </span>
+                  <span className="ml-1">new interests this month</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Saved Articles */}
+            <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+              <CardHeader className="pb-2">
+                <p className="text-sm font-medium text-gray-700">Saved Articles</p>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-3xl font-bold text-gray-900">12</h3>
+                  <div className="h-10 w-10 rounded-full flex items-center justify-center bg-green-100">
+                    <LucideBookmark className="h-5 w-5 text-green-600" />
                   </div>
-                  <p className="text-xs text-gray-500 italic">{article.recommendation}</p>
-                </CardContent>
-                <CardFooter className="p-4 pt-2 flex justify-end">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-[#1e3a6d] border-[#1e3a6d] hover:bg-[#1e3a6d]/10"
-                    onClick={() => {
-                      // This would normally fetch the URL for this article
-                      // For now, we'll just redirect to the demo page
-                      router.push('/demo')
-                    }}
-                  >
-                    Analyze
-                  </Button>
-                </CardFooter>
-              </Card>
+                </div>
+                <div className="mt-2 text-xs text-gray-500 flex items-center">
+                  <LucideClock className="h-3 w-3 mr-1" />
+                  <span>Last saved 2 days ago</span>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* URL Input for New Research */}
+          <Card className="mb-8 border border-gray-200 shadow-sm bg-white">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xl font-bold">Analyze New Research</CardTitle>
+              <CardDescription>Enter a URL to a scientific article to get AI-powered insights</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleAnalyzeSubmit} className="flex w-full space-x-2">
+                <Input 
+                  type="url" 
+                  placeholder="Paste article URL here..." 
+                  className="flex-1 border-gray-300 focus:border-[#1e3a6d] focus:ring-[#1e3a6d]"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  required
+                  disabled={isAnalyzing}
+                />
+                <Button 
+                  type="submit" 
+                  className="bg-[#1e3a6d] hover:bg-[#0f2a4d] text-white px-6"
+                  disabled={isAnalyzing}
+                >
+                  Analyze <LucideArrowRight className="ml-2 h-4 w-4" />
+                </Button>
+              </form>
+              {analysisError && (
+                <p className="mt-2 text-sm text-red-600">{analysisError}</p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Recent Research */}
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Your Recent Articles</h2>
+              <Link href="/dashboard/research-interests">
+                <Button variant="outline" size="sm" className="text-[#1e3a6d] border-[#1e3a6d] hover:bg-[#1e3a6d]/10">
+                  View All <LucideChevronRight className="ml-1 h-4 w-4" />
+                </Button>
+              </Link>
             </div>
-          ))}
+
+            {loadingArticles ? (
+              <div className="text-center py-8">
+                <div className="h-6 w-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mx-auto mb-4"></div>
+                <p className="text-gray-600">Loading your articles...</p>
+              </div>
+            ) : articlesError ? (
+              <div className="text-center py-8 text-red-600">
+                <p>{articlesError}</p>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="mt-2"
+                  onClick={fetchUserArticles}
+                >
+                  Retry
+                </Button>
+              </div>
+            ) : userArticles.length === 0 ? (
+              <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200">
+                <p className="text-gray-600 mb-2">You haven't analyzed any articles yet</p>
+                <p className="text-gray-500 text-sm mb-4">Enter a URL above to get started</p>
+              </div>
+            ) : (
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
+                {userArticles.slice(0, 4).map((article: ArticleSummary, index: number) => (
+                  <div key={article.id || index}>
+                    <Card className="overflow-hidden hover:shadow-md transition-shadow h-full border border-gray-200 bg-white">
+                      <CardHeader className="p-4 pb-2 border-b bg-white">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <CardTitle className="text-base line-clamp-2">{article.title}</CardTitle>
+                            <CardDescription className="text-xs mt-1">
+                              {article.source || 'Unknown Source'} • {article.publish_date ? new Date(article.publish_date).toLocaleDateString() : 'No date'}
+                            </CardDescription>
+                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <LucideMoreHorizontal className="h-4 w-4" />
+                                <span className="sr-only">More</span>
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                              <DropdownMenuItem onClick={() => article.id && toggleBookmark(article.id)}>
+                                <LucideBookmark className="mr-2 h-4 w-4" />
+                                <span>{article.is_bookmarked ? 'Remove bookmark' : 'Save to collection'}</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem>
+                                <LucideFileText className="mr-2 h-4 w-4" />
+                                <span>View full analysis</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-red-600">
+                                <span>Remove from history</span>
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="p-4 pt-3">
+                        <p className="text-sm text-gray-600 line-clamp-2 mb-3">{article.summary || 'No summary available'}</p>
+                        <div className="flex flex-wrap gap-1">
+                          {article.keywords && Array.isArray(article.keywords) && article.keywords.slice(0, 3).map((keyword: string, idx: number) => (
+                            <Link href={`/dashboard/research-topic/1`} key={idx}>
+                              <Badge
+                                variant="outline"
+                                className="bg-blue-50 text-[#1e3a6d] text-xs hover:bg-blue-100 cursor-pointer"
+                              >
+                                {keyword}
+                              </Badge>
+                            </Link>
+                          ))}
+                          {article.keywords && Array.isArray(article.keywords) && article.keywords.length > 3 && (
+                            <Badge variant="outline" className="bg-gray-100 text-gray-600 text-xs">
+                              +{article.keywords.length - 3} more
+                            </Badge>
+                          )}
+                        </div>
+                      </CardContent>
+                      <CardFooter className="p-4 pt-0 flex justify-between items-center">
+                        <div className="text-xs text-gray-500">
+                          <LucideCalendar className="inline h-3 w-3 mr-1" />
+                          Analyzed {formatDate(article.created_at)}
+                        </div>
+                        <Link href={`/article-summary?url=${encodeURIComponent(article.url)}`}>
+                          <Button variant="ghost" size="sm" className="h-8 text-[#1e3a6d] hover:bg-[#1e3a6d]/10">
+                            View
+                          </Button>
+                        </Link>
+                      </CardFooter>
+                    </Card>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Trending Research Topics */}
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Trending Research Topics</h2>
+            </div>
+
+            <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+              <div className="flex flex-wrap gap-2">
+                {trendingTopics.map((topic: { name: string; isHot: boolean }, index: number) => (
+                  <Link href={`/dashboard/research-topic/1`} key={index}>
+                    <Badge
+                      className={`text-sm py-1.5 px-3 cursor-pointer ${topic.isHot ? "bg-red-100 text-red-800 hover:bg-red-200" : "bg-blue-50 text-[#1e3a6d] hover:bg-blue-100"}`}
+                    >
+                      {topic.name}
+                      {topic.isHot && <span className="ml-1">🔥</span>}
+                    </Badge>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Suggested Articles */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Suggested For You</h2>
+              <Link href="/dashboard/suggestions">
+                <Button variant="ghost" size="sm" className="text-[#1e3a6d] hover:bg-[#1e3a6d]/10">
+                  More Suggestions
+                </Button>
+              </Link>
+            </div>
+
+            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {suggestedArticles.map((article: any, index: number) => (
+                <div key={index}>
+                  <Card className="overflow-hidden hover:shadow-md transition-shadow h-full border border-gray-200">
+                    <CardHeader className="p-4 pb-2">
+                      <div>
+                        <CardTitle className="text-base line-clamp-2">{article.title}</CardTitle>
+                        <CardDescription className="text-xs mt-1">
+                          {article.journal} • {article.date}
+                        </CardDescription>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="p-4 pt-2">
+                      <p className="text-sm text-gray-600 line-clamp-2 mb-3">{article.summary}</p>
+                      <div className="flex flex-wrap gap-1 mb-3">
+                        {article.keywords.slice(0, 3).map((keyword: string, idx: number) => (
+                          <Badge
+                            key={idx}
+                            variant="outline"
+                            className="bg-blue-50 text-[#1e3a6d] text-xs hover:bg-blue-100"
+                          >
+                            {keyword}
+                          </Badge>
+                        ))}
+                      </div>
+                      <p className="text-xs text-gray-500 italic">{article.recommendation}</p>
+                    </CardContent>
+                    <CardFooter className="p-4 pt-2 flex justify-end">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-[#1e3a6d] border-[#1e3a6d] hover:bg-[#1e3a6d]/10"
+                        onClick={() => {
+                          // This would normally fetch the URL for this article
+                          // For now, we'll just redirect to the demo page
+                          router.push('/demo')
+                        }}
+                      >
+                        Analyze
+                      </Button>
+                    </CardFooter>
+                  </Card>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Notification */}
+          {notification && notification.show && (
+            <div className="bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 mb-4 rounded shadow-sm">
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <svg className="h-5 w-5 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2h-1V9z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="ml-3">
+                  <p className="text-sm">{notification.message}</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      </div>
+      )}
     </>
   )
 }
-
-// Sample data for recent articles
-const recentArticles = [
-  {
-    title: "Impact of Mediterranean Diet on Cardiovascular Health: A 10-Year Longitudinal Study",
-    journal: "New England Journal of Medicine",
-    date: "Mar 15, 2023",
-    summary:
-      "Long-term adherence to a Mediterranean diet shows significant reduction in cardiovascular events and mortality across diverse populations.",
-    keywords: ["Mediterranean Diet", "Cardiovascular Health", "Nutrition", "Longevity", "Preventive Medicine"],
-    analyzedDate: "2 days ago",
-  },
-  {
-    title: "Neuroplasticity and Cognitive Function: Impact of Intermittent Fasting on Brain Health",
-    journal: "Neuroscience",
-    date: "Feb 28, 2023",
-    summary:
-      "Intermittent fasting protocols demonstrate significant improvements in cognitive function and neuroplasticity markers in adult subjects.",
-    keywords: ["Neuroplasticity", "Intermittent fasting", "Cognitive function", "Brain health", "Metabolism"],
-    analyzedDate: "1 week ago",
-  },
-  {
-    title: "Gut Microbiome Composition and Its Relationship to Mental Health Outcomes",
-    journal: "Cell",
-    date: "Jan 10, 2023",
-    summary:
-      "Analysis of gut microbiome diversity shows strong correlations with anxiety, depression, and overall mental health status in a large cohort study.",
-    keywords: ["Gut microbiome", "Mental health", "Anxiety", "Depression", "Microbiota-gut-brain axis"],
-    analyzedDate: "2 weeks ago",
-  },
-  {
-    title: "Artificial Intelligence Applications in Early Cancer Detection: A Systematic Review",
-    journal: "Journal of Clinical Oncology",
-    date: "Dec 5, 2022",
-    summary:
-      "AI algorithms demonstrate superior sensitivity and specificity compared to traditional screening methods for early-stage cancer detection.",
-    keywords: ["Artificial intelligence", "Cancer detection", "Machine learning", "Oncology", "Screening"],
-    analyzedDate: "3 weeks ago",
-  },
-  {
-    title: "Environmental Factors in Autoimmune Disease Development: New Insights",
-    journal: "Immunity",
-    date: "Nov 18, 2022",
-    summary:
-      "Recent evidence suggests significant roles for air pollution, dietary factors, and chemical exposures in triggering autoimmune conditions.",
-    keywords: ["Autoimmune disease", "Environmental factors", "Immunology", "Inflammation", "Epigenetics"],
-    analyzedDate: "1 month ago",
-  },
-]
 
 // Sample data for trending topics
 const trendingTopics = [

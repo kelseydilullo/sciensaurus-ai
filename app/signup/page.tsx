@@ -8,8 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { SciensaurusLogo } from "@/components/sciensaurus-logo"
-import { AuthRedirect } from "@/components/auth-redirect"
-import { Check, Mail } from "lucide-react"
+import { Check, Loader2, Mail } from "lucide-react"
 
 export default function SignupPage() {
   const [firstName, setFirstName] = useState('');
@@ -21,7 +20,23 @@ export default function SignupPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [signupComplete, setSignupComplete] = useState(false);
   const [signupError, setSignupError] = useState<string | null>(null);
-  const { signUp, isLoading, error: authError } = useAuth();
+  const { signUp, isLoading, error: authError, session } = useAuth();
+
+  // Clear errors when form fields change
+  const clearError = () => {
+    if (signupError) {
+      setSignupError(null);
+    }
+  };
+
+  // Handle successful authentication with session
+  useEffect(() => {
+    if (session && isSubmitting && !signupComplete) {
+      console.log('Signup page detected active session, redirecting to dashboard');
+      window.location.href = '/dashboard';
+      // Don't reset isSubmitting since we're redirecting away
+    }
+  }, [session, isSubmitting, signupComplete]);
 
   // Show any auth configuration errors
   useEffect(() => {
@@ -59,7 +74,16 @@ export default function SignupPage() {
         setIsSubmitting(false);
       } else if (success) {
         if (emailConfirmed) {
-          // No need to change state, AuthRedirect will handle this
+          // Session will be detected by useEffect and redirect to dashboard
+          console.log('Email confirmed, awaiting session detection');
+          // Just in case, add a fallback redirect
+          setTimeout(() => {
+            if (document.visibilityState !== 'hidden') { // Check if we're still on this page
+              console.log('Session not detected after signup with confirmed email, redirecting manually');
+              window.location.href = '/dashboard';
+              // Don't reset isSubmitting since we're redirecting away
+            }
+          }, 2000);
         } else {
           // Email confirmation required
           setSignupComplete(true);
@@ -133,10 +157,6 @@ export default function SignupPage() {
     )
   }
 
-  if (isSubmitting) {
-    return <AuthRedirect redirectTo="/dashboard" message="Creating your account..." isSignup={true} />
-  }
-
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
@@ -175,9 +195,12 @@ export default function SignupPage() {
                     type="text" 
                     placeholder="John" 
                     value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
+                    onChange={(e) => {
+                      setFirstName(e.target.value);
+                      clearError();
+                    }}
                     required
-                    disabled={!!authError}
+                    disabled={isSubmitting}
                   />
                 </div>
                 <div className="space-y-2">
@@ -189,9 +212,12 @@ export default function SignupPage() {
                     type="text" 
                     placeholder="Doe" 
                     value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
+                    onChange={(e) => {
+                      setLastName(e.target.value);
+                      clearError();
+                    }}
                     required
-                    disabled={!!authError}
+                    disabled={isSubmitting}
                   />
                 </div>
               </div>
@@ -204,9 +230,12 @@ export default function SignupPage() {
                   type="email" 
                   placeholder="name@example.com" 
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    clearError();
+                  }}
                   required
-                  disabled={!!authError}
+                  disabled={isSubmitting}
                 />
               </div>
               <div className="space-y-2">
@@ -217,9 +246,12 @@ export default function SignupPage() {
                   id="password" 
                   type="password" 
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    clearError();
+                  }}
                   required
-                  disabled={!!authError}
+                  disabled={isSubmitting}
                 />
                 <p className="text-xs text-gray-500">
                   Password must be at least 8 characters long
@@ -233,9 +265,12 @@ export default function SignupPage() {
                   id="confirm-password" 
                   type="password"
                   value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    clearError();
+                  }}
                   required
-                  disabled={!!authError}
+                  disabled={isSubmitting}
                 />
               </div>
 
@@ -244,15 +279,18 @@ export default function SignupPage() {
                   <Checkbox 
                     id="terms" 
                     checked={acceptTerms}
-                    onCheckedChange={(checked) => setAcceptTerms(checked === true)}
-                    disabled={!!authError}
+                    onCheckedChange={(checked) => {
+                      setAcceptTerms(checked === true);
+                      clearError();
+                    }}
+                    disabled={isSubmitting}
                     className="mr-2"
                   />
                   <label
                     htmlFor="terms"
                     className="text-sm font-medium cursor-pointer"
                   >
-                    I accept the <Link href="/terms" className="text-[#1e3a6d] hover:underline">terms and conditions</Link>
+                    I accept the <Link href="/terms" className="text-[#1e3a6d] hover:underline">Terms of Service</Link> and <Link href="/privacy" className="text-[#1e3a6d] hover:underline">Privacy Policy</Link>
                   </label>
                 </div>
               </div>
@@ -260,9 +298,16 @@ export default function SignupPage() {
               <Button 
                 type="submit" 
                 className="w-full bg-[#1e3a6d] hover:bg-[#0f2a4d] text-white"
-                disabled={isSubmitting || !!authError}
+                disabled={isSubmitting}
               >
-                {isSubmitting ? 'Creating Account...' : 'Create Account'}
+                {isSubmitting ? (
+                  <span className="flex items-center">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating account...
+                  </span>
+                ) : (
+                  'Create Account'
+                )}
               </Button>
             </form>
           </CardContent>

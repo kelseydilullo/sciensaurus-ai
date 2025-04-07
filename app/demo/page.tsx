@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { ArticleAnalyzer } from "@/components/article-analyzer";
 import { SciensaurusLogo } from "@/components/sciensaurus-logo";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 
 export default function DemoPage() {
   const searchParams = useSearchParams();
@@ -41,7 +42,7 @@ export default function DemoPage() {
       <main className="container mx-auto px-4 py-12">
         <h1 className="text-3xl md:text-4xl font-bold text-center mb-6 text-[#1e3a6d]">
           Analyze Scientific Articles
-        </h1>
+          </h1>
         <p className="text-lg text-center mb-12 max-w-3xl mx-auto text-gray-600">
           Our AI assistant analyzes scientific articles to provide you with a comprehensive breakdown of the research, making complex studies more accessible.
         </p>
@@ -61,7 +62,7 @@ export default function DemoPage() {
 
       <footer className="bg-gray-100 py-8 mt-20">
         <div className="container mx-auto px-4 text-center text-gray-600">
-          <p>© {new Date().getFullYear()} Sciensaurus. All rights reserved.</p>
+            <p>© {new Date().getFullYear()} Sciensaurus. All rights reserved.</p>
         </div>
       </footer>
     </div>

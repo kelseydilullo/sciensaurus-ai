@@ -14,11 +14,6 @@ export function DebugTools() {
   const [diagnosticInfo, setDiagnosticInfo] = useState<Record<string, any>>({})
   const auth = useAuth()
   
-  // Only show in development
-  if (process.env.NODE_ENV !== "development" || !visible) {
-    return null
-  }
-
   useEffect(() => {
     // Run basic auth diagnostic checks
     const runDiagnostics = () => {
@@ -59,6 +54,11 @@ export function DebugTools() {
     Promise.resolve(callback())
       .then(() => setLastOperation(`${operation} completed`))
       .catch(err => setLastOperation(`${operation} failed: ${err.message}`))
+  }
+
+  // Only show in development
+  if (process.env.NODE_ENV !== "development" || !visible) {
+    return null
   }
 
   return (

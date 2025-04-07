@@ -14,6 +14,7 @@ import {
   LucideBookOpen,
   LucideUsers,
   LucideCompass,
+  LucideFileText
 } from "lucide-react"
 import {
   Sidebar,
@@ -140,6 +141,19 @@ export function DashboardSidebar() {
                     </div>
                     {expanded && <span className={`ml-3 ${pathname === "/dashboard/saved-articles" ? "font-medium text-[#1e3a6d]" : "text-gray-700"}`}>My Saved Articles</span>}
                     {!expanded && <span className="sr-only">My Saved Articles</span>}
+                  </div>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild isActive={pathname === "/dashboard/summarize"}>
+                <Link href="/dashboard/summarize" className="transition-colors duration-200">
+                  <div className="flex items-center py-2 px-2 rounded-md hover:bg-blue-50">
+                    <div className={pathname === "/dashboard/summarize" ? "text-[#1e3a6d]" : "text-gray-500"}>
+                      <LucideFileText className="h-5 w-5 min-w-5" />
+                    </div>
+                    {expanded && <span className={`ml-3 ${pathname === "/dashboard/summarize" ? "font-medium text-[#1e3a6d]" : "text-gray-700"}`}>Summarize Article</span>}
+                    {!expanded && <span className="sr-only">Summarize Article</span>}
                   </div>
                 </Link>
               </SidebarMenuButton>

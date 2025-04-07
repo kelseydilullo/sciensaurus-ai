@@ -213,80 +213,25 @@ export default function SummarizePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!url.trim()) return;
+    
     setIsLoading(true);
     setError(null);
-    setResult(null);
-    setStreamedText("");
-    setIsProcessing(true);
-    setParseError(null);
 
     try {
-      console.log("Submitting URL:", url);
-      const response = await fetch('/api/summarize-article', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ url }),
-      });
-
-      console.log("API Response status:", response.status);
+      // Store the URL in session storage for the article-summary page
+      sessionStorage.setItem('articleUrl', url);
       
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to summarize article');
-      }
-
-      // Check if response is JSON or plain text
-      const contentType = response.headers.get('Content-Type') || '';
+      // Set the flag to indicate we want to process this URL (not preprocessed)
+      sessionStorage.removeItem('articlePreprocessed');
       
-      if (contentType.includes('text/plain')) {
-        // Handle streaming text response
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-        
-        if (!reader) {
-          throw new Error('Failed to get response reader');
-        }
-
-        let done = false;
-        let accumulatedText = "";
-
-        while (!done) {
-          const { value, done: doneReading } = await reader.read();
-          done = doneReading;
-          
-          if (value) {
-            const chunkText = decoder.decode(value);
-            accumulatedText += chunkText;
-            setStreamedText(accumulatedText);
-          }
-        }
-
-        console.log("Finished reading stream, accumulated text length:", accumulatedText.length);
-        
-        // Try to parse the text response into a structured format
-        const parsedResult = parseTextResponse(accumulatedText);
-        if (parsedResult) {
-          console.log("Successfully parsed text response into structured data:", parsedResult);
-          setResult(parsedResult);
-        } else {
-          // If parsing fails, at least display the raw text
-          console.log("Failed to parse text response, using raw text");
-          setStreamedText(accumulatedText);
-        }
-      } else {
-        // Handle JSON response
-        const data = await response.json();
-        console.log("Received JSON response:", data);
-        setResult(data);
-      }
+      // Redirect to the article-summary page
+      router.push(`/article-summary?url=${encodeURIComponent(url)}`);
     } catch (error) {
       console.error("Error:", error);
       setError(error instanceof Error ? error.message : 'An unexpected error occurred');
-    } finally {
       setIsLoading(false);
-      setIsProcessing(false);
     }
   };
 

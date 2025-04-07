@@ -8,8 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { SciensaurusLogo } from "@/components/sciensaurus-logo"
-import { AuthRedirect } from "@/components/auth-redirect"
-import { Check } from "lucide-react"
+import { Check, Loader2 } from "lucide-react"
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -20,12 +19,28 @@ export default function LoginPage() {
   const [debugInfo, setDebugInfo] = useState<string | null>(null);
   const { signIn, isLoading, error: authError, session, user } = useAuth();
 
+  // Clear errors when user interacts with form fields
+  const clearError = () => {
+    if (loginError) {
+      setLoginError(null); 
+    }
+  };
+
   // Show any auth configuration errors
   useEffect(() => {
     if (authError) {
       setLoginError(authError);
     }
   }, [authError]);
+
+  // Redirect on successful authentication
+  useEffect(() => {
+    if (session && isSubmitting) {
+      console.log('Login page detected active session, redirecting to dashboard');
+      window.location.href = '/dashboard';
+      // We don't reset isSubmitting here since we're redirecting away
+    }
+  }, [session, isSubmitting]);
 
   // Show session info for debugging
   useEffect(() => {
@@ -56,16 +71,17 @@ export default function LoginPage() {
         setLoginError(error.message || 'Failed to sign in. Please check your credentials.');
         setIsSubmitting(false);
       } else if (success) {
-        // Don't use AuthRedirect here, let the session check handle it
         console.log('Login successful, session should be detected');
-        // Give it a moment to update
+        // Keep isSubmitting true until redirect happens in useEffect
+        
+        // Fallback redirect in case the session detection doesn't trigger
         setTimeout(() => {
-          if (!session) {
-            console.log('Session not detected after successful login, redirecting anyway');
+          if (document.visibilityState !== 'hidden') { // Check if we're still on this page
+            console.log('Session not detected after successful login, redirecting manually');
             window.location.href = '/dashboard';
+            // Don't need to reset isSubmitting since we're redirecting away
           }
-          setIsSubmitting(false);
-        }, 500);
+        }, 2000); // Give more time for session to be detected
       } else {
         console.error('Login succeeded but no session was created');
         setLoginError('Authentication succeeded but no session was created. Please try again.');
@@ -78,47 +94,17 @@ export default function LoginPage() {
     }
   };
 
-  if (session && !isSubmitting) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
-        <Card className="w-full max-w-md">
-          <CardHeader className="space-y-1">
-            <CardTitle className="text-2xl font-bold text-center text-[#1e3a6d]">Successfully Logged In</CardTitle>
-            <CardDescription className="text-center">You are now authenticated</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {debugInfo && (
-              <div className="bg-gray-100 p-4 rounded-md overflow-auto">
-                <pre className="text-xs">{debugInfo}</pre>
-              </div>
-            )}
-            <div className="mt-4 flex justify-center">
-              <Button 
-                className="bg-[#1e3a6d] hover:bg-[#0f2a4d] text-white"
-                onClick={() => window.location.href = '/dashboard'}
-              >
-                Go to Dashboard
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  if (isSubmitting) {
-    return <AuthRedirect redirectTo="/dashboard" />
-  }
-
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
       <header className="bg-white border-b border-gray-200">
         <div className="container mx-auto px-4 py-4">
-          <Link href="/" className="flex items-center gap-2">
-            <SciensaurusLogo className="h-6 w-6 text-[#1e3a6d]" />
-            <span className="text-xl font-bold text-[#1e3a6d]">Sciensaurus</span>
-          </Link>
+          <div className="flex items-center justify-center px-4 md:px-8 xl:px-0">
+            <Link href="/" className="flex items-center space-x-2">
+              <SciensaurusLogo className="h-6 w-6 text-[#1e3a6d]" />
+              <span className="text-xl font-bold text-[#1e3a6d]">Sciensaurus</span>
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -147,9 +133,12 @@ export default function LoginPage() {
                   type="email" 
                   placeholder="name@example.com" 
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    clearError();
+                  }}
                   required
-                  disabled={!!authError}
+                  disabled={isSubmitting}
                 />
               </div>
               <div className="space-y-2">
@@ -165,9 +154,12 @@ export default function LoginPage() {
                   id="password" 
                   type="password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    clearError();
+                  }}
                   required
-                  disabled={!!authError}
+                  disabled={isSubmitting}
                 />
               </div>
 
@@ -177,7 +169,7 @@ export default function LoginPage() {
                     id="remember" 
                     checked={rememberMe}
                     onCheckedChange={(checked) => setRememberMe(checked === true)}
-                    disabled={!!authError}
+                    disabled={isSubmitting}
                     className="mr-2"
                   />
                   <label
@@ -192,9 +184,16 @@ export default function LoginPage() {
               <Button 
                 type="submit" 
                 className="w-full bg-[#1e3a6d] hover:bg-[#0f2a4d] text-white"
-                disabled={isSubmitting || !!authError}
+                disabled={isSubmitting}
               >
-                {isSubmitting ? 'Signing In...' : 'Sign In'}
+                {isSubmitting ? (
+                  <span className="flex items-center">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Signing in...
+                  </span>
+                ) : (
+                  'Sign In'
+                )}
               </Button>
             </form>
           </CardContent>

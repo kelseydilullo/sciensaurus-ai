@@ -1,0 +1,20 @@
+### Summarized Title:
+Comprehensive Review of Intervertebral Disc Degeneration: Causes, Therapies, and Challenges
+
+### Visual Summary:
+- 🧬 Genetic and environmental factors contribute significantly to intervertebral disc degeneration (IVDD).
+- 🔬 Current therapies focus on symptom management rather than reversing disc degeneration.
+- 📊 Emerging therapies include cell-based, scaffold-based, and gene therapies, but their efficacy in reversing IVDD is still under investigation.
+
+### Keywords:
+intervertebral disc degeneration, therapy, exosome, small molecule, stem cell
+
+### Cohort Analysis:
+Type of study: Literature review
+Duration: Not specified
+Date range: Not specified
+Cohort size: Not applicable
+
+Notes:
+- The review highlights the complexity of IVDD and the multifactorial nature of its causes.
+- It emphasizes the need for therapies that address the underlying causes of IVDD rather than just the symptoms.

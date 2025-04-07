@@ -50,6 +50,10 @@ export async function signIn(email: string, password: string) {
     console.log('Auth util: Signing in with:', email);
     
     const supabase = getSupabaseClient();
+    
+    // First ensure we're signed out to prevent any state confusion
+    await supabase.auth.signOut();
+    
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
