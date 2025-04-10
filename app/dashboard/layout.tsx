@@ -4,11 +4,10 @@ import React, { useState, useEffect } from "react"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { DashboardSidebar } from "@/components/dashboard-sidebar"
 import { UserAvatarDropdown } from "@/components/user-avatar-dropdown"
-import { SciensaurusLogo } from "@/components/sciensaurus-logo"
+import { AuthRedirect } from "@/components/auth-redirect"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { LucideSearch, LucideBell } from "lucide-react"
-import Link from "next/link"
 
 export default function DashboardLayout({
   children,

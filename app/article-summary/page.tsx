@@ -1,29 +1,21 @@
 'use client';
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation"; // Keep useSearchParams
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { BookmarkIcon, Share2Icon, DownloadIcon, PrinterIcon, ExternalLinkIcon, ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
+import { LucideClipboardCopy, LucideCheck, LucideChevronRight, ArrowLeft, CheckCircle2 } from "lucide-react"; 
 import { 
+  ResponsiveContainer,
   BarChart, 
   Bar, 
   XAxis, 
   YAxis, 
   CartesianGrid, 
   Tooltip, 
-  Legend, 
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Sector,
-  LabelList
 } from 'recharts';
-import { useAuth } from "@/contexts/auth-context";
-import ArticleSummaryContent from "@/components/article-summary-content";
+import { useAuth } from "@/contexts/auth-context"; // Keep useAuth
 
 // --- Ensure ArticleSummary interface is defined --- 
 interface ArticleSummary {
@@ -93,7 +85,7 @@ const LoadingOverlay = ({
             return (
               <div key={step} className="flex items-center gap-3">
                 {isCompleted ? (
-                  <CheckCircle2 className="h-6 w-6 text-green-500 flex-shrink-0" />
+                  <LucideCheck className="h-6 w-6 text-green-500 flex-shrink-0" />
                 ) : isCurrent ? (
                   <div className="h-6 w-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin flex-shrink-0"></div>
                 ) : (
@@ -122,9 +114,7 @@ const LoadingOverlay = ({
 };
 
 export default function ArticleSummaryPage() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const { user } = useAuth();
 
   const [url, setUrl] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -134,19 +124,15 @@ export default function ArticleSummaryPage() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [articleTitle, setArticleTitle] = useState<string>('');
   const [articleSource, setArticleSource] = useState<string>('');
-  const [publishDate, setPublishDate] = useState<string>("");
-  const [activeGenderIndex, setActiveGenderIndex] = useState<number | undefined>(undefined);
+  // Keep publishDate state, but comment out unused setter
+  const [publishDate /*, setPublishDate */] = useState<string>(""); 
+  // const [activeGenderIndex, setActiveGenderIndex] = useState<number | undefined>(undefined);
   
   // Loading overlay state
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
   const [currentStep, setCurrentStep] = useState<string>("retrievingContent");
   const [completedSteps, setCompletedSteps] = useState<string[]>([]);
   const [extractedKeywords, setExtractedKeywords] = useState<string[]>([]);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [loadingRelatedResearch, setLoadingRelatedResearch] = useState(false);
-  const [relatedResearchData, setRelatedResearchData] = useState<any>(null); 
-  const [relatedResearchError, setRelatedResearchError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   
   // Add state for storing related research results
   const [relatedResearch, setRelatedResearch] = useState<{
@@ -1156,14 +1142,6 @@ export default function ArticleSummaryPage() {
         notes: string[];
       }
       
-      type ResultData = {
-        title: string;
-        originalTitle: string;
-        visualSummary: { emoji: string; point: string }[];
-        keywords: string[];
-        cohortAnalysis: CohortAnalysis;
-      }
-      
       // Internal structure for parsing
       const parsedDataInternal = {
         title: "",
@@ -1734,7 +1712,7 @@ export default function ArticleSummaryPage() {
         originalTitle: parsedDataInternal.originalTitle,
         summarized_title: parsedDataInternal.title, 
         source: articleSource, // Get source from component state
-        publish_date: publishDate, // Get publishDate from component state
+        publish_date: publishDate, // Use publishDate state variable
         summary: parsedDataInternal.visualSummary.map(item => item.point).join('\n'),
         visual_summary: parsedDataInternal.visualSummary,
         visualSummary: parsedDataInternal.visualSummary, // Alias
@@ -2681,7 +2659,7 @@ export default function ArticleSummaryPage() {
         url,
         title: articleData.title || articleTitle,
         source: articleSource,
-        publish_date: publishDate || null,
+        publish_date: publishDate || null, // Use publishDate state variable
         summary: articleData.summary,
         visual_summary: articleData.visual_summary || [],
         keywords: articleData.keywords || [],
@@ -2768,7 +2746,7 @@ export default function ArticleSummaryPage() {
       console.error("Error storing article data:", error);
       // Don't show errors to user - we don't want to disrupt the UI
     }
-  }, [url, articleTitle, articleSource, publishDate, relatedResearch]);
+  }, [url, articleTitle, articleSource, publishDate, relatedResearch]); // Add publishDate back to dependencies
 
   // Modify the part where result is set to also store in Supabase
   useEffect(() => {
@@ -2959,6 +2937,7 @@ export default function ArticleSummaryPage() {
                 
                 <div className="flex items-center text-sm text-gray-500 mt-2">
                   {articleSource && <span className="mr-2">{articleSource}</span>}
+                  {/* Restore publishDate display */}
                   {publishDate && (
                     <>
                       <span className="mx-2">•</span>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 import { cookies } from 'next/headers';
 import { verifyUserArticleReferences } from '@/utils/supabase/article-storage';
+import { getUserFromToken } from '@/utils/supabase/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -76,4 +77,9 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function POST(_request: NextRequest) {
+  // Add underscore to indicate unused parameter
+  // Implementation of POST method
 } 

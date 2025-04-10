@@ -5,7 +5,6 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
   LucideHome,
-  LucideBookmark,
   LucideSettings,
   LucideHelpCircle,
   LucideLogOut,
@@ -14,7 +13,6 @@ import {
   LucideBookOpen,
   LucideUsers,
   LucideCompass,
-  LucideFileText
 } from "lucide-react"
 import {
   Sidebar,
@@ -26,7 +24,6 @@ import {
   SidebarMenuButton,
 } from "@/components/ui/sidebar"
 import { useAuth } from "@/contexts/auth-context"
-import { Button } from "@/components/ui/button"
 import { SciensaurusLogo } from "./sciensaurus-logo"
 
 export function DashboardSidebar() {

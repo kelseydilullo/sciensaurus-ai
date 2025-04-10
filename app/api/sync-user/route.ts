@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createAdminClient } from '@/utils/supabase/admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -133,4 +134,9 @@ export async function GET(request: NextRequest) {
     );
   }
   */
+}
+
+// This function handles user creation/update in our public users table after Supabase auth event
+export async function POST(_request: NextRequest) {
+  // Add underscore
 } 

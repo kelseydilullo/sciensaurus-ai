@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -428,7 +428,6 @@ export default function ArticleSummaryContent({
     return result;
   };
   
-  // Extract parsed result if necessary
   const result = useMemo(() => {
     if (articleData?.rawText && typeof articleData.rawText === 'string') {
       return parseTextResponse(articleData.rawText);
@@ -437,28 +436,28 @@ export default function ArticleSummaryContent({
   }, [articleData]);
     
   // Function to normalize data from the database
-  const normalizeDataFromDatabase = () => {
+  const normalizeDataFromDatabase = useCallback(() => {
     if (!result) return;
     
     console.log("Normalizing data from database:", {
       resultType: typeof result,
-      hasVisualSummary: !!result.visual_summary,
-      visualSummaryType: result.visual_summary ? typeof result.visual_summary : 'undefined',
-      visualSummaryIsString: result.visual_summary ? typeof result.visual_summary === 'string' : false,
-      hasStudyMetadata: !!result.study_metadata,
-      studyMetadataType: result.study_metadata ? typeof result.study_metadata : 'undefined'
+      hasVisualSummary: !!result.visualSummary,
+      visualSummaryType: result.visualSummary ? typeof result.visualSummary : 'undefined',
+      visualSummaryIsString: result.visualSummary ? typeof result.visualSummary === 'string' : false,
+      hasStudyMetadata: !!(result.cohortAnalysis || result.study_metadata),
+      studyMetadataType: result.cohortAnalysis ? typeof result.cohortAnalysis : (result.study_metadata ? typeof result.study_metadata : 'undefined')
     });
     
-    // Handle visual_summary if it's a string (might be stringified JSON)
-    if (result.visual_summary && typeof result.visual_summary === 'string') {
+    // Handle visualSummary if it's a string (might be stringified JSON)
+    if (result.visualSummary && typeof result.visualSummary === 'string') {
       try {
         // Try to parse the JSON string
-        result.visual_summary = JSON.parse(result.visual_summary);
+        result.visualSummary = JSON.parse(result.visualSummary);
         console.log("Successfully parsed visual_summary from string to object");
       } catch (error) {
         console.error("Failed to parse visual_summary:", error);
         // Set to empty array if parsing fails
-        result.visual_summary = [];
+        result.visualSummary = [];
       }
     }
     
@@ -506,7 +505,8 @@ export default function ArticleSummaryContent({
         result.related_research = { supporting: [], contradictory: [], totalFound: 0 };
       }
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
   
   // Use useEffect to normalize data on component mount
   useEffect(() => {
@@ -521,7 +521,7 @@ export default function ArticleSummaryContent({
     console.log('[ContentComponent] Received relatedResearch prop:', relatedResearch);
     
     normalizeDataFromDatabase();
-  }, [articleData, relatedResearch]);
+  }, [articleData, relatedResearch, normalizeDataFromDatabase]);
   
   // Use useEffect to update title and source when component mounts
   useEffect(() => {
@@ -562,54 +562,50 @@ export default function ArticleSummaryContent({
           const sourceName = domain.split('.')[0];
           setArticleSource(sourceName.charAt(0).toUpperCase() + sourceName.slice(1));
         }
-      } catch (e) {
+      } catch (_e) {
         // Ignore URL parsing errors
         setArticleSource("");
       }
     }
     
     // Set article titles
-    if (result) {
-      // Set original title if available from the JSON format
-      if (result.originalTitle || result.originalArticleTitle) {
-        const original = result.originalArticleTitle || result.originalTitle;
-        setOriginalTitle(original);
-        // Also set as main article title if no title preference is set
-        if (!articleTitle) {
-          setArticleTitle(original);
-        }
+    const currentResult = result || {};
+    if (currentResult) {
+      if (currentResult.originalTitle || currentResult.originalArticleTitle) {
+        const original = currentResult.originalArticleTitle || currentResult.originalTitle;
+        setOriginalTitle(original || '');
+        // Avoid setting articleTitle if it's already set, remove articleTitle from deps
+        setArticleTitle(prev => prev || original || '');
       }
       
-      // Set AI summary title if available from the JSON format
-      if (result.title || result.summarizedTitle) {
-        const summary = result.summarizedTitle || result.title;
-        setAiSummaryTitle(summary);
-        
-        // If we don't have an original title, use the AI title as the main title
-        if (!(result.originalArticleTitle || result.originalTitle) && !articleTitle) {
-          setArticleTitle(summary);
-        }
+      if (currentResult.title || currentResult.summarizedTitle) {
+        const summary = currentResult.summarizedTitle || currentResult.title;
+        setAiSummaryTitle(summary || '');
+        // Avoid setting articleTitle if it's already set, remove articleTitle from deps
+        setArticleTitle(prev => prev || summary || '');
       }
     }
-  }, [url, result, articleTitle]);
+  // Remove articleTitle from dependency array
+  }, [url, result]);
   
   const renderVisualSummary = () => {
-    // Directly use the visualSummary array from the result
+    const currentResult = result || {};
     let visualSummaryData = null;
     
     // Use the parsed visualSummary from the JSON
-    if (result && result.visualSummary && Array.isArray(result.visualSummary) && result.visualSummary.length > 0) {
-      visualSummaryData = result.visualSummary;
+    if (currentResult.visualSummary && Array.isArray(currentResult.visualSummary) && currentResult.visualSummary.length > 0) {
+      visualSummaryData = currentResult.visualSummary;
       console.log("Using result.visualSummary");
     }
     // Check for snake_case (database format) as fallback
-    else if (result && result.visual_summary && Array.isArray(result.visual_summary) && result.visual_summary.length > 0) {
-      visualSummaryData = result.visual_summary;
+    else if (currentResult.visual_summary && Array.isArray(currentResult.visual_summary) && currentResult.visual_summary.length > 0) {
+      visualSummaryData = currentResult.visual_summary;
       console.log("Using result.visual_summary");
     }
     // Check original articleData if nothing found in result
-    else if (articleData && articleData.visual_summary && Array.isArray(articleData.visual_summary) && articleData.visual_summary.length > 0) {
-      visualSummaryData = articleData.visual_summary;
+    const currentArticleData = articleData || {};
+    if (!visualSummaryData && currentArticleData.visual_summary && Array.isArray(currentArticleData.visual_summary) && currentArticleData.visual_summary.length > 0) {
+      visualSummaryData = currentArticleData.visual_summary;
       console.log("Using articleData.visual_summary");
     }
     
@@ -874,7 +870,7 @@ export default function ArticleSummaryContent({
               </Pie>
               <Tooltip formatter={(value) => `${value}%`} />
               <Legend 
-                formatter={(value, entry) => {
+                formatter={(value, _entry) => {
                   // Add percentage to the legend label
                   const item = genderData.find(d => d.name === value);
                   const sum = genderData.reduce((acc, curr) => acc + curr.value, 0);
