@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 import { getDashboardStats } from '@/utils/supabase/article-storage';
-import { getUserFromToken } from '@/utils/supabase/server';
+import { createClient } from '@/utils/supabase/server';
 
 // This endpoint is only for debugging and should be disabled in production
 export const runtime = 'nodejs';
@@ -11,7 +11,8 @@ export async function GET(_request: NextRequest) {
   try {
     console.log('Debug dashboard stats endpoint called');
     
-    const { user, error: authError } = await getUserFromToken();
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
 
     if (authError || !user) {
       console.error('Auth error:', authError);

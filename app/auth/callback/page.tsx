@@ -7,6 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Check, AlertTriangle } from 'lucide-react';
 
+export const dynamic = 'force-dynamic';
+
 export default function AuthCallback() {
   const router = useRouter();
   const searchParams = useSearchParams();
