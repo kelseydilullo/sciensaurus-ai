@@ -1,11 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient } from '@/utils/supabase/admin';
-import { cookies } from 'next/headers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
+  console.log('Sync user endpoint called - This endpoint is now deprecated');
+  
+  // Return a message indicating this endpoint is deprecated
+  return NextResponse.json(
+    { 
+      success: true, 
+      message: 'User sync functionality has been deprecated as it is no longer needed. Auth accounts and user table entries are now automatically in sync.' 
+    },
+    { status: 200 }
+  );
+
+  /*
+  // Original implementation preserved for reference
   try {
     console.log('Sync user endpoint called');
     
@@ -121,4 +132,5 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+  */
 } 

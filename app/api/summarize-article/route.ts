@@ -2,6 +2,8 @@ import { openai } from '@ai-sdk/openai';
 import { generateText, generateObject, streamText, tool } from 'ai';
 import { z } from 'zod';
 import { JSDOM } from 'jsdom';
+import { traceAICall } from '@/utils/ai-config';
+import { createClient } from '@/utils/supabase/client';
 
 // Use Node.js runtime
 export const runtime = 'nodejs';
@@ -540,6 +542,30 @@ function extractReadableContent(document: Document): string {
   return content || document.body.textContent || '';
 }
 
+// Helper function to get a human-readable source from URL
+const getSourceFromUrl = (url: string): string => {
+  try {
+    const urlObj = new URL(url);
+    let source = urlObj.hostname.replace('www.', '');
+    
+    // Make source more human-readable
+    if (source.includes('pubmed') || source.includes('ncbi.nlm.nih.gov')) {
+      return 'PubMed';
+    } else if (source.includes('nature.com')) {
+      return 'Nature';
+    } else if (source.includes('sciencedirect')) {
+      return 'ScienceDirect';
+    } else {
+      // Capitalize first letter of domain
+      source = source.split('.')[0];
+      return source.charAt(0).toUpperCase() + source.slice(1);
+    }
+  } catch (urlError) {
+    console.warn("Error parsing URL for source:", urlError);
+    return 'Unknown Source';
+  }
+};
+
 // Execute the summarization agent
 export async function POST(req: Request) {
   try {
@@ -755,99 +781,61 @@ export async function POST(req: Request) {
     }
     
     // Enhance the system prompt to extract original title if requested
-    let systemPrompt = `You are a powerful research assistant with a skill for reading scientific research articles, and understanding what the key findings are from each article. You know how to read an article and provide a human with a TLDR that does not miss any pertinent results from the article. But you provide enough context in your summary that a human can quickly understand the scope and purpose of the study, as well as a clear report of the results/key findings.
+    let systemPrompt = `You are a powerful research assistant with a skill for reading scientific research articles, and understanding what the key findings are from each article. You know how to read an article and provide a human with a TLDR that does not miss any pertinent results from the article. But you provide enough context in your summary that a human can quickly understand the scope and purpose of the study, as well as a clear report of the results/key findings. You include statistics related to key findings, where they are included in the article. You provide important statistics as mentioned in the article, if they are found in reference to a key finding. You do not invent statistics.
 
-    Take the URL provided, and summarize the content providing the following EXACTLY in this format:`;
+    Take the URL provided, and summarize the content providing the following in a structured JSON format with these exact fields:
 
-    // Add original title section if requested
-    if (extractOriginalTitle) {
-      systemPrompt += `
-
-    ### Original Article Title:
-    [The exact original title of the article. Look for <h1> tags, metadata, or the most prominent heading. For scientific articles, make sure to capture the complete title.]`;
+    {
+      "originalArticleTitle": "The exact original title of the article",
+      "summarizedTitle": "A concise, informative title that captures the main discovery or conclusion",
+      "visualSummary": [
+        {
+          "emoji": "🧬",
+          "point": "First key finding or important point from the article"
+        },
+        {
+          "emoji": "🔬",
+          "point": "Second key finding or important point from the article"
+        },
+        // Additional points as needed
+      ],
+      "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
+      "cohortAnalysis": {
+        "typeOfStudy": "The type of study (experiment, observation, etc.)",
+        "duration": "Duration of the study if applicable",
+        "dateRange": "Date range of the study if applicable",
+        "cohortSize": 0, // Number of participants as an integer
+        "ageDistribution": "Age range and distribution information exactly as stated in the article",
+        "gender": {
+          "male": 0, // Percentage as a number
+          "female": 0 // Percentage as a number
+        },
+        "geographicDistribution": "Geographic information exactly as stated in the article",
+        "notes": [
+          "Important note 1 about the study methodology",
+          "Important note 2 about the study methodology"
+        ]
+      }
     }
 
-    systemPrompt += `
-
-    ### Summarized Title:
-    [A concise, informative title that captures the main discovery or conclusion of the article. This will be displayed as the "AI Summary" on the page, so make it clear and impactful.]
-
-    ### Visual Summary: 3-10 key points from the article (each starting with a relevant emoji that represents the content of that point). If there are percentages provided in the results or abstract section of the literature, make sure to include them in the summary. The first bullet point should describe what was studied. Make it easy to understand for non-experts.
-
-    EXAMPLE ::: (do not use these emojis, use your own, and only use each emoji once):
-    🧬 Novel mRNA-1273.351 vaccine candidate demonstrated 96.4% efficacy against the Beta variant in phase 3 clinical trials.
-    🛡️ Neutralizing antibody titers were 4.3-fold higher against the Delta variant compared to the original vaccine formulation.
-    ⏱️ Protection lasted at least 8 months post-vaccination with minimal waning of immunity observed.
-    🔬 T-cell responses showed cross-reactivity against all tested variants, including Beta, Delta, and Omicron.
-    💉 Side effect profile was similar to the original mRNA vaccines with no new safety concerns identified.
-    🦠 Breakthrough infections were 76% less common with the new vaccine candidate compared to the original formulation.
-    👵 Efficacy in adults over 65 years was 91.3%, showing strong protection in vulnerable populations.
-    [Add more findings with relevant emojis as needed. Do not default to the same emoji for each key point. Do not use the same emoji for multiple key points.
-    IMPORTANT: Each key point MUST start with a relevant emoji that represents the content of that point.
-    Strike a balance between including scientific jargon and providing a summary that is easy to understand for non-experts. ]
-
-    ### Keywords:
-    [Generate 5-7 specific keywords that accurately represent the research interests of the article. These keywords will be used to find similar articles, so they must be specifically relevant to the research field, methods, or concepts.
+    Guidelines for creating the JSON:
     
-    GUIDELINES FOR GOOD KEYWORDS:
-    - Use specific scientific terms rather than generic ones
-    - Include specialized research areas, techniques, or biological processes
-    - Prefer multi-word technical terms that would be used by researchers in the field
-    - Include specific gene names, diseases, or organisms that are central to the research
-    - Include methodologies that are significant to the findings
+    1. For the original article title, capture the exact title as it appears in the article.
+    2. For the summarized title, create a concise, informative title that captures the main discovery or conclusion.
+    3. For visual summary, provide 3-10 key points from the article, each with a relevant emoji that represents the content. The first point should describe what was studied. Make each point easy to understand for non-experts.
+    4. For keywords, provide 5-7 specific scientific terms that accurately represent the research interests. Focus on specific technical terms used in the field.
+    5. For cohort analysis:
+      - Only include demographic information that is EXPLICITLY stated in the article
+      - Do not make up or estimate demographic percentages if not provided
+      - For age data, provide it exactly as mentioned in the article
+      - Include specific demographic statements verbatim in the notes section if they don't fit elsewhere
     
-    GOOD KEYWORD EXAMPLES:
-    ✓ "intervertebral disc degeneration" (specific condition)
-    ✓ "gut microbiome dysbiosis" (specific area of study)
-    ✓ "CRISPR-Cas9" (specific technique)
-    ✓ "ACE2 receptor" (specific biological component)
-    ✓ "mesenchymal stem cells" (specific cell type)
-    ✓ "chronic systemic inflammation" (specific physiological process)
+    Ensure all JSON fields have values - use empty strings, arrays, or zeros for missing data, but include all fields.
     
-    BAD KEYWORD EXAMPLES:
-    ✗ "therapy" (too generic - specify what kind of therapy)
-    ✗ "medical" (too vague)
-    ✗ "research" (too vague)
-    ✗ "health" (too broad)
-    ✗ "study" (describes format, not content)
-    ✗ "treatment" (too generic - what specific treatment?)
-    
-    Present keywords as a comma-separated list of specific, research-relevant terms. Each keyword should be precise enough that clicking on it would return meaningfully related articles.]
-    
-    ### Cohort Analysis:
-    Type of study: [literature review, experiment, etc.]
-    Duration: [duration of study if applicable]
-    Date range: [date range of articles if literature review]
-    Cohort size: [number of participants if applicable - use EXACT number from the article, do not estimate]
-    
-    Age Distribution:
-    [IMPORTANT: Only provide age distribution if EXPLICITLY stated in the article. Use the same age ranges as in the article. DO NOT invent or guess percentages. If the article states exact numbers of participants in each age group, calculate the percentages accurately. If only some age information is provided (e.g., "11 out of 14 participants were over 60 years old"), use exactly that age grouping (e.g., "Under 60: 21.4%, 60+: 78.6%").]
-    
-    Gender:
-    Male: [percentage - ONLY if explicitly stated in the article]%
-    Female: [percentage - ONLY if explicitly stated in the article]%
-    
-    Geographic Distribution:
-    [IMPORTANT: Only include regions explicitly mentioned in the article with their specific percentages. DO NOT invent regions or percentages.]
-    
-    Notes:
-    - [Include any specific statements about participant demographics exactly as they appear in the article]
-    - [Another important note if applicable]
-
-    Make sure to include ALL the sections in the format above, even if some fields have limited or no information (indicate with "Not specified" or "Not applicable").
-    Use semantic emojis at the start of each visual summary point that represent the content of that finding. Never use the same emoji twice.
-    For keywords, focus on specific scientific topics, methodologies, or biological processes relevant to the article. Assess the quality of each keyword to ensure it would be valuable for finding similar research articles.
-    
-    IMPORTANT GUIDANCE ON DEMOGRAPHIC DATA:
-    1. For the Cohort Analysis section, ONLY provide demographic information that is EXPLICITLY stated in the article.
-    2. DO NOT make up, guess, or estimate demographic percentages if they are not clearly provided.
-    3. If exact counts are given (e.g., "11 out of 14 participants"), convert to percentages accurately.
-    4. If only qualitative descriptions are provided (e.g., "majority were female"), note this in text form exactly as stated.
-    5. For age data, use the same age ranges as mentioned in the article - do not fit data into predefined ranges.
-    6. If specific demographic statements exist but don't fit the structured format, include them verbatim in the Notes section.`;
+    All emojis in the visualSummary should be unique - never use the same emoji twice.`;
 
     try {
-      console.log('Generating summary as plain text...');
+      console.log('Generating summary as JSON...');
       
       let promptText = `Please summarize this scientific article`;
       
@@ -857,9 +845,7 @@ export async function POST(req: Request) {
       
       promptText += ` from the URL: ${usedAlternativeSource ? alternativeSourceUrl : url}.`;
       
-      if (extractOriginalTitle) {
-        promptText += ` Make sure to correctly identify and extract the original title of the article exactly as it appears in the source.`;
-      }
+      promptText += ` Make sure to correctly identify and extract the original title of the article exactly as it appears in the source.`;
       
       promptText += `
       The extracted content from the article is provided below:
@@ -870,443 +856,158 @@ export async function POST(req: Request) {
       Article Content:
       ${articleData.content.substring(0, 25000)}`;
       
-      // Use streamText to generate a plain text response instead of structured object
-      const response = streamText({
-        model: openai('gpt-4o'),
-        system: systemPrompt,
-        prompt: promptText,
-        temperature: 0.2,
-      });
+      console.log('Preparing to send AI request for article summary...');
+      
+      // --- Use generateText to get the full response --- 
+      const { text: aiResponseText } = await traceAICall(
+        {
+          name: 'summarize-article',
+          model: 'gpt-4o',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: promptText }
+          ],
+          temperature: 0.2,
+          extraParams: { url }
+        },
+        async () => {
+          // --- Use generateText --- 
+          return generateText({
+            model: openai('gpt-4o'),
+            system: systemPrompt,
+            prompt: promptText,
+            temperature: 0.2,
+          });
+        }
+      );
   
-      console.log('Streaming response to client');
+      console.log('Received full AI response, length:', aiResponseText.length);
+      console.log("First 100 chars:", aiResponseText.substring(0, 100));
   
-      // Return the response as a text stream with info about alternative source if used
       const headers = {
-        'Content-Type': 'text/plain; charset=utf-8'
+          'Content-Type': 'application/json; charset=utf-8'
       };
 
-      // Add automatic storage after streaming the response
+      // --- Parse the full AI response --- 
+      let parsedResponse = null;
       try {
-        // Check if we have the necessary data to store
-        if (url) {
-          console.log("Automatically storing article summary in database");
-          
-          // We'll use a buffer to capture and parse the AI response
-          // before sending to the storage API
-          const responseBuffer = new TransformStream();
-          const responseReader = responseBuffer.readable.getReader();
-          
-          // Clone the response to create a buffered copy we can read from
-          // while still streaming the original to the client
-          const responseBodyStream = response.toTextStreamResponse({ headers }).body;
-          if (!responseBodyStream) {
-            // Handle the case where response body is null
-            console.error("Response body stream is null");
-            return new Response("Error: No response body", { status: 500 });
-          }
-          
-          const [responseForClient, responseForProcessing] = responseBodyStream.tee();
-          
-          // Pipe the response to our buffer for processing
-          responseForProcessing.pipeTo(responseBuffer.writable).catch(error => {
-            console.error('Error buffering response:', error);
-          });
-          
-          // Process the response in the background to extract structured data
-          // This won't block the stream to the client
-          (async () => {
-            try {
-              let accumulatedText = '';
-              const decoder = new TextDecoder();
-              
-              // Read chunks until stream is done
-              while (true) {
-                const { done, value } = await responseReader.read();
-                if (done) break;
-                
-                accumulatedText += decoder.decode(value, { stream: true });
-              }
-              
-              // Ensure final decoding
-              accumulatedText += decoder.decode();
-              
-              console.log("Captured AI response, length:", accumulatedText.length);
-              console.log("First 100 chars:", accumulatedText.substring(0, 100));
-              
-              // Extract structured data from the AI response text
-              // Extract title
-              let parsedTitle = '';
-              const titleMatch = accumulatedText.match(/### Summarized Title:\s*([\s\S]*?)(?=###|$)/);
-              if (titleMatch && titleMatch[1]) {
-                parsedTitle = titleMatch[1].trim();
-                console.log("Extracted title:", parsedTitle);
-              }
-              
-              // Extract original title if available
-              let originalTitle = '';
-              const originalTitleMatch = accumulatedText.match(/### Original Article Title:\s*([\s\S]*?)(?=###|$)/);
-              if (originalTitleMatch && originalTitleMatch[1]) {
-                originalTitle = originalTitleMatch[1].trim();
-                console.log("Extracted original title:", originalTitle);
-              }
-              
-              // Use original title if available, otherwise use the parsed title or fall back to DB title
-              const titleToStore = originalTitle || parsedTitle || articleData.title || url;
-              
-              // Extract visual summary points
-              const visualSummaryPoints: Array<{emoji: string; point: string}> = [];
-              const visualSummarySection = accumulatedText.match(/### Visual Summary:\s*([\s\S]*?)(?=###|$)/);
-              if (visualSummarySection && visualSummarySection[1]) {
-                const summaryText = visualSummarySection[1].trim();
-                const points = summaryText
-                  .split('\n')
-                  .map(line => line.trim())
-                  .filter(line => line && line !== '' && !line.startsWith('EXAMPLE') && !line.includes('[Add more findings'));
-                
-                for (const point of points) {
-                  // Look for emoji + text format
-                  const emojiMatch = point.match(/^(\p{Emoji})\s+(.+)$/u);
-                  if (emojiMatch) {
-                    visualSummaryPoints.push({
-                      emoji: emojiMatch[1],
-                      point: emojiMatch[2]
-                    });
-                  }
-                }
-                console.log(`Extracted ${visualSummaryPoints.length} visual summary points`);
-              }
-              
-              // Extract keywords
-              let keywords: string[] = [];
-              const keywordsSection = accumulatedText.match(/### Keywords:\s*([\s\S]*?)(?=###|$)/);
-              if (keywordsSection && keywordsSection[1]) {
-                keywords = keywordsSection[1]
-                  .split(',')
-                  .map(keyword => keyword.trim())
-                  .filter(keyword => 
-                    keyword && 
-                    keyword !== '' && 
-                    !keyword.includes('GUIDELINES FOR GOOD KEYWORDS') &&
-                    !keyword.includes('GOOD KEYWORD EXAMPLES') &&
-                    !keyword.includes('BAD KEYWORD EXAMPLES') &&
-                    !keyword.startsWith('✓') &&
-                    !keyword.startsWith('✗')
-                  );
-                console.log(`Extracted ${keywords.length} keywords:`, keywords);
-              }
-              
-              // Extract cohort analysis
-              let studyMetadata = null;
-              const cohortSection = accumulatedText.match(/### Cohort Analysis:\s*([\s\S]*?)(?=###|$)/);
-              if (cohortSection && cohortSection[1]) {
-                const cohortText = cohortSection[1].trim();
-                
-                // Extract structured cohort data
-                const studyTypeMatch = cohortText.match(/Type of study:\s*([^\n]+)/);
-                const durationMatch = cohortText.match(/Duration:\s*([^\n]+)/);
-                const dateRangeMatch = cohortText.match(/Date range:\s*([^\n]+)/);
-                const cohortSizeMatch = cohortText.match(/Cohort size:\s*([^\n]+)/);
-                
-                // Extract gender distribution
-                const maleMatch = cohortText.match(/Male:\s*([0-9.]+)%/);
-                const femaleMatch = cohortText.match(/Female:\s*([0-9.]+)%/);
-                
-                // Extract notes
-                const notesMatches = [...cohortText.matchAll(/- ([^\n]+)/g)];
-                const notes = notesMatches.map(match => match[1].trim());
-                
-                // Build study metadata object
-                studyMetadata = {
-                  studyType: studyTypeMatch ? studyTypeMatch[1].trim() : '',
-                  duration: durationMatch ? durationMatch[1].trim() : '',
-                  dateRange: dateRangeMatch ? dateRangeMatch[1].trim() : '',
-                  cohortSize: cohortSizeMatch ? parseInt(cohortSizeMatch[1].trim(), 10) || 0 : 0,
-                  cohortStratification: {
-                    gender: {
-                      male: maleMatch ? parseFloat(maleMatch[1]) : 0,
-                      female: femaleMatch ? parseFloat(femaleMatch[1]) : 0,
-                      other: 0 // Default to 0
-                    },
-                    ageRanges: [], // We'd need more complex parsing for this
-                    demographics: [] // We'd need more complex parsing for this
-                  },
-                  notes: notes
-                };
-                console.log("Extracted study metadata");
-              }
-              
-              // Create a summary from the visual summary points if available
-              let parsedSummary = '';
-              if (visualSummaryPoints.length > 0) {
-                parsedSummary = visualSummaryPoints.map(item => item.point).join(' ');
-              } else {
-                // If we couldn't extract visual summary points, use the first part of the article content
-                parsedSummary = articleData.content.substring(0, 1000);
-              }
-              
-              // Get source based on URL
-              let sourceToStore = '';
-              try {
-                const urlObj = new URL(url);
-                sourceToStore = urlObj.hostname.replace('www.', '');
-                
-                // Make source more human-readable
-                if (sourceToStore.includes('pubmed') || sourceToStore.includes('ncbi.nlm.nih.gov')) {
-                  sourceToStore = 'PubMed';
-                } else if (sourceToStore.includes('nature.com')) {
-                  sourceToStore = 'Nature';
-                } else if (sourceToStore.includes('sciencedirect')) {
-                  sourceToStore = 'ScienceDirect';
-                } else {
-                  // Capitalize first letter of domain
-                  sourceToStore = sourceToStore.split('.')[0];
-                  sourceToStore = sourceToStore.charAt(0).toUpperCase() + sourceToStore.slice(1);
-                }
-              } catch (urlError) {
-                console.warn("Error parsing URL for source:", urlError);
-              }
-              
-              // Try to extract publish date if available
-              let publishDate = null;
-              try {
-                // Use type assertion to access potential properties not in the type definition
-                const anyArticleData = articleData as any;
-                
-                // Check if articleData has a direct publish date
-                if (anyArticleData.publishDate || anyArticleData.publish_date) {
-                  publishDate = anyArticleData.publishDate || anyArticleData.publish_date;
-                } 
-                // Special handling for PubMed/PMC articles which have a consistent citation format
-                else if (url.includes('ncbi.nlm.nih.gov') || url.includes('pubmed') || url.includes('pmc')) {
-                  console.log('Detected PubMed/PMC article, looking for citation with date format');
-                  
-                  // Look for the common publication citation format: Journal. YYYY Month DD
-                  const pubmedCitationPattern = /Published in final edited form as:.*?(\d{4})[\s\.]+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s\.]+(\d{1,2})/i;
-                  const pubmedMatch = articleData.content.match(pubmedCitationPattern);
-                  
-                  if (pubmedMatch) {
-                    const year = pubmedMatch[1];
-                    let month = pubmedMatch[2];
-                    const day = pubmedMatch[3];
-                    
-                    // Convert month name to number (Jan -> 0, Feb -> 1, etc.)
-                    const monthMap: Record<string, number> = {
-                      'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'may': 4, 'jun': 5,
-                      'jul': 6, 'aug': 7, 'sep': 8, 'oct': 9, 'nov': 10, 'dec': 11
-                    };
-                    
-                    const monthNum = monthMap[month.toLowerCase().substring(0, 3)];
-                    if (monthNum !== undefined) {
-                      console.log(`Extracted publication date: ${year}-${monthNum+1}-${day}`);
-                      publishDate = new Date(parseInt(year), monthNum, parseInt(day)).toISOString();
-                    }
-                  }
-                  
-                  // Alternative PMC citation format
-                  if (!publishDate) {
-                    const pmcCitationPattern = /Lancet\.\s+(\d{4})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})/i;
-                    const pmcMatch = articleData.content.match(pmcCitationPattern);
-                    
-                    if (pmcMatch) {
-                      const year = pmcMatch[1];
-                      let month = pmcMatch[2];
-                      const day = pmcMatch[3];
-                      
-                      // Convert month name to number
-                      const monthMap: Record<string, number> = {
-                        'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'may': 4, 'jun': 5,
-                        'jul': 6, 'aug': 7, 'sep': 8, 'oct': 9, 'nov': 10, 'dec': 11
-                      };
-                      
-                      const monthNum = monthMap[month.toLowerCase().substring(0, 3)];
-                      if (monthNum !== undefined) {
-                        console.log(`Extracted publication date from citation: ${year}-${monthNum+1}-${day}`);
-                        publishDate = new Date(parseInt(year), monthNum, parseInt(day)).toISOString();
-                      }
-                    }
-                  }
-                }
-                // Look for date in title or metadata
-                if (!publishDate && articleData.content) {
-                  // Common date patterns in scientific articles
-                  const datePatterns = [
-                    /Published(?:\s+online)?(?:\s*):?\s*([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i,
-                    /Posted(?:\s+online)?(?:\s*):?\s*([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i,
-                    /Date(?:\s*):?\s*([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i,
-                    /(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i,
-                    /([A-Za-z]+\s+\d{4})/i,
-                    /(\d{4}-\d{2}-\d{2})/i,
-                    /(\d{2}\/\d{2}\/\d{4})/i
-                  ];
-                  
-                  // Try each pattern until we find a match
-                  for (const pattern of datePatterns) {
-                    const match = articleData.content.match(pattern);
-                    if (match && match[1]) {
-                      publishDate = match[1];
-                      break;
-                    }
-                  }
-                }
-                
-                // If we found a date, try to normalize it to ISO format
-                if (publishDate) {
-                  // If it's already a Date object, convert to ISO string
-                  if (publishDate instanceof Date) {
-                    // Check if date is in the future
-                    const now = new Date();
-                    if (publishDate > now) {
-                      console.warn("Detected future date, setting to current date:", publishDate);
-                      publishDate = new Date().toISOString();
-                    } else {
-                      publishDate = publishDate.toISOString();
-                    }
-                  } 
-                  // If it's a string, try to parse it
-                  else if (typeof publishDate === 'string') {
-                    const parsedDate = new Date(publishDate);
-                    // Check if it's a valid date and not in the future
-                    if (!isNaN(parsedDate.getTime())) {
-                      const now = new Date();
-                      if (parsedDate > now) {
-                        console.warn("Detected future date from string, setting to current date:", publishDate);
-                        publishDate = new Date().toISOString();
-                      } else {
-                        publishDate = parsedDate.toISOString();
-                      }
-                    } else {
-                      console.warn("Unparseable date format:", publishDate);
-                      // Try to extract year and create a more reliable date
-                      const yearMatch = publishDate.match(/\b(19|20)\d{2}\b/);
-                      if (yearMatch) {
-                        const year = parseInt(yearMatch[0]);
-                        // Ensure year is not in the future
-                        const currentYear = new Date().getFullYear();
-                        if (year > currentYear) {
-                          console.warn("Future year detected:", year);
-                          publishDate = new Date(currentYear, 0, 1).toISOString();
-                        } else {
-                          publishDate = new Date(year, 0, 1).toISOString();
-                        }
-                      } else {
-                        // If we can't parse it, default to null
-                        publishDate = null;
-                      }
-                    }
-                  }
-                }
-              } catch (dateError) {
-                console.warn("Error extracting publish date:", dateError);
-                publishDate = null;
-              }
-              
-              // Prepare data for storage with parsed values
-              const dataToStore = {
-                url,
-                title: titleToStore,
-                source: sourceToStore,
-                publish_date: publishDate,
-                summary: parsedSummary,
-                keywords: keywords,
-                visual_summary: visualSummaryPoints,
-                study_metadata: studyMetadata,
-                // Leave related_research empty - will be populated by semantic-scholar-search
-                related_research: {
-                  supporting: [],
-                  contradictory: [],
-                  totalFound: 0,
-                  searchKeywords: keywords
-                },
-                raw_content: articleData.content  // Store the full article content for reference
-              };
-              
-              console.log("Prepared data to store:", {
-                url: dataToStore.url,
-                title: dataToStore.title,
-                source: dataToStore.source,
-                hasPublishDate: !!dataToStore.publish_date,
-                summaryLength: dataToStore.summary.length,
-                keywordsCount: dataToStore.keywords.length,
-                visualSummaryCount: dataToStore.visual_summary.length,
-                hasStudyMetadata: !!dataToStore.study_metadata
-              });
-              
-              // Make internal API call to store the article
-              const storeResponse = await fetch(new URL('/api/store-article-summary', req.url).toString(), {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  // Forward the auth cookie for user identification
-                  'Cookie': req.headers.get('cookie') || ''
-                },
-                body: JSON.stringify(dataToStore)
-              });
-              
-              if (storeResponse.ok) {
-                const storeResult = await storeResponse.json();
-                console.log("Article summary stored successfully:", storeResult);
-              } else {
-                const errorText = await storeResponse.text();
-                console.error("Failed to store article summary:", storeResponse.status, errorText);
-              }
-              
-            } catch (processingError) {
-              console.error("Error processing AI response:", processingError);
-              
-              // Fall back to storing just the article content if parsing fails
-              try {
-                const fallbackData = {
-                  url,
-                  title: articleData.title || url,
-                  source: url.includes('pubmed') ? 'PubMed' : new URL(url).hostname.replace('www.', ''),
-                  publish_date: null,
-                  summary: articleData.content.substring(0, 1000),
-                  keywords: [] as string[],
-                  visual_summary: [] as any[],
-                  study_metadata: null,
-                  related_research: {
-                    supporting: [],
-                    contradictory: [],
-                    totalFound: 0,
-                    searchKeywords: []
-                  },
-                  raw_content: articleData.content
-                };
-                
-                console.log("Falling back to storing basic article data");
-                
-                const fallbackResponse = await fetch(new URL('/api/store-article-summary', req.url).toString(), {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Cookie': req.headers.get('cookie') || ''
-                  },
-                  body: JSON.stringify(fallbackData)
-                });
-                
-                if (fallbackResponse.ok) {
-                  console.log("Fallback storage successful");
-                } else {
-                  console.error("Fallback storage failed:", await fallbackResponse.text());
-                }
-              } catch (fallbackError) {
-                console.error("Even fallback storage failed:", fallbackError);
-              }
-            }
-          })();
-          
-          // Return the original response to the client without waiting
-          // for the background processing to complete
-          return new Response(responseForClient, { headers });
+        const jsonMatch = aiResponseText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          parsedResponse = JSON.parse(jsonMatch[0]);
+          console.log("Successfully parsed JSON from AI response");
         } else {
-          console.warn("Missing required data for article storage");
-          return response.toTextStreamResponse({ headers });
+          throw new Error("Could not find JSON structure in AI response");
         }
-      } catch (storageError) {
-        console.error("Error in automatic article storage:", storageError);
-        // Non-critical, don't throw error - we've already sent the response to the client
-        return response.toTextStreamResponse({ headers });
+      } catch (jsonError: unknown) {
+        const errorMessage = jsonError instanceof Error ? jsonError.message : 'Unknown parsing error';
+        console.error("Error parsing JSON from AI response:", jsonError);
+        console.log("AI response format:", aiResponseText.substring(0, 500));
+        // Return an error response to the client if parsing fails
+        return new Response(JSON.stringify({ 
+          error: `Failed to parse AI response as JSON: ${errorMessage}`,
+          rawResponse: aiResponseText.substring(0, 1000) // Include snippet for debugging
+        }), { 
+          status: 500, 
+          headers: { 'Content-Type': 'application/json' } 
+        });
       }
+
+      if (!parsedResponse) {
+        // Should ideally be caught above, but as a safeguard
+        return new Response(JSON.stringify({ 
+          error: "Unable to extract structured data from AI response (parsedResponse is null)",
+          rawResponse: aiResponseText.substring(0, 1000)
+        }), { 
+          status: 500, 
+          headers: { 'Content-Type': 'application/json' } 
+        });
+      }
+
+      // --- Store summary in background (using parsedResponse) --- 
+      // Check if we have the necessary data to store
+      if (url && parsedResponse) { // Check for parsedResponse as well
+        console.log("Automatically storing article summary in database");
+          
+        // Process the response in the background to extract structured data
+        // This won't block the stream to the client
+        (async () => {
+          try {
+            // Map the response to our database schema according to the specified mapping
+            const dataToStore = {
+              url,
+              // Map "Original Article Title" or fallback to "Summarized Title"
+              title: parsedResponse.originalArticleTitle || parsedResponse.title || "",
+              // Store the AI-generated summarized title
+              summarized_title: parsedResponse.summarizedTitle || "",
+              source: getSourceFromUrl(url),
+              publish_date: null, // Will be set later if available
+              // Use the visual summary points joined as the summary
+              summary: parsedResponse.visualSummary?.map((item: any) => item.point).join(' ') || "",
+              // Store the full visual summary array with emoji and points
+              visual_summary: parsedResponse.visualSummary || [],
+              // Store keywords
+              keywords: parsedResponse.keywords || [],
+              // Map cohort analysis to study metadata
+              study_metadata: {
+                studyType: parsedResponse.cohortAnalysis?.typeOfStudy || parsedResponse.cohortAnalysis?.studyType || "",
+                cohortSize: parsedResponse.cohortAnalysis?.cohortSize || 0,
+                ageDistribution: parsedResponse.cohortAnalysis?.ageDistribution || "",
+                geographicDistribution: parsedResponse.cohortAnalysis?.geographicDistribution || "",
+                notes: parsedResponse.cohortAnalysis?.notes || []
+              },
+              // Initialize related research (will be populated by another API)
+              related_research: {
+                supporting: [],
+                contradictory: [],
+                totalFound: 0,
+                searchKeywords: parsedResponse.keywords || []
+              },
+              // Store the raw article content for reference
+              raw_content: articleData.content // articleData should still be in scope here
+            };
+            
+            console.log("Prepared data to store:", {
+              url: dataToStore.url,
+              title: dataToStore.title,
+              summarizedTitle: dataToStore.summarized_title,
+              source: dataToStore.source,
+              summaryLength: dataToStore.summary.length,
+              keywordsCount: (dataToStore.keywords || []).length,
+              visualSummaryCount: (dataToStore.visual_summary || []).length,
+              hasStudyMetadata: !!dataToStore.study_metadata
+            });
+            
+            // Make internal API call to store the article
+            const storeResponse = await fetch(new URL('/api/store-article-summary', req.url).toString(), {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                // Forward the auth cookie for user identification
+                'Cookie': req.headers.get('cookie') || ''
+              },
+              body: JSON.stringify(dataToStore)
+            });
+            
+            if (storeResponse.ok) {
+              const storeResult = await storeResponse.json();
+              console.log("Article summary stored successfully:", storeResult);
+            } else {
+              const errorText = await storeResponse.text();
+              console.error("Failed to store article summary:", storeResponse.status, errorText);
+              // Don't throw error here, just log it, as client response already sent
+            }
+            
+          } catch (processingError) {
+            console.error("Error processing AI response for storage:", processingError);
+            // Log the error for server-side debugging
+          }
+        })(); // Immediately invoke the async function for background processing
+      }
+        
+      // --- Return the PARSED JSON response to the client --- 
+      // This happens regardless of whether background storage was initiated or successful
+      return new Response(JSON.stringify(parsedResponse), { headers }); 
+
     } catch (error) {
       console.error('Error generating summary:', error);
       return new Response(JSON.stringify({ error: 'Failed to summarize article' }), { 

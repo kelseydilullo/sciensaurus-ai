@@ -28,6 +28,26 @@ import { useRouter } from "next/navigation"
 import { useAuth } from "@/contexts/auth-context"
 import ArticleSummaryContent from "@/components/article-summary-content"
 
+// Helper functions for safe URL handling
+const getSourceFromUrl = (url?: string): string => {
+  if (!url) return 'Unknown Source';
+  try {
+    return new URL(url).hostname.replace('www.', '');
+  } catch {
+    return 'Unknown Source';
+  }
+};
+
+const getPathEndFromUrl = (url?: string): string => {
+  if (!url) return '';
+  try {
+    const parts = url.split('/');
+    return parts[parts.length - 1] || parts[parts.length - 2] || '';
+  } catch {
+    return '';
+  }
+};
+
 // Loading Overlay Component
 const LoadingOverlay = ({ 
   isVisible, 
@@ -104,10 +124,12 @@ interface ArticleSummary {
   id?: string;
   url: string;
   title: string;
+  summarized_title?: string;
   source?: string;
   publish_date?: string;
   summary?: string;
   visual_summary?: Array<{emoji: string; point: string}>;
+  visualSummary?: Array<{emoji: string; point: string}>;
   keywords?: string[];
   study_metadata?: any;
   related_research?: any;
@@ -115,6 +137,8 @@ interface ArticleSummary {
   updated_at?: string;
   is_bookmarked?: boolean;
   view_count?: number;
+  originalArticleTitle?: string;
+  originalTitle?: string;
 }
 
 export default function DashboardPage() {
@@ -151,6 +175,37 @@ export default function DashboardPage() {
   const [loadingArticles, setLoadingArticles] = useState(true);
   const [articlesError, setArticlesError] = useState<string | null>(null);
   
+  // State for user's dashboard stats from the new API
+  const [dashboardStats, setDashboardStats] = useState<{
+    user: {
+      id: string;
+      firstName: string;
+      email: string;
+    };
+    articlesAnalyzed: {
+      count: number;
+      growthPercentage: number;
+      savedCount: number;
+    };
+    recentArticles: ArticleSummary[];
+    lastSavedDaysAgo: number;
+    responseTime: number;
+  }>({
+    user: {
+      id: '',
+      firstName: 'there',
+      email: ''
+    },
+    articlesAnalyzed: {
+      count: 0,
+      growthPercentage: 0,
+      savedCount: 0
+    },
+    recentArticles: [],
+    lastSavedDaysAgo: 0,
+    responseTime: 0
+  });
+
   // Get the first name from user metadata or fallback to email parsing
   const firstName = user?.user_metadata?.first_name || 
     (user?.email 
@@ -163,41 +218,153 @@ export default function DashboardPage() {
     message: string;
   } | null>(null);
 
-  // Fetch user's articles from Supabase when the component mounts or user changes
-  useEffect(() => {
-    if (user?.id) {
-      fetchUserArticles();
-    }
-  }, [user]);
-
-  // Function to fetch user's articles from Supabase
-  const fetchUserArticles = async () => {
+  // Replace the separate fetch with a single API call
+  const fetchDashboardStats = async () => {
     setLoadingArticles(true);
     setArticlesError(null);
     
     try {
-      const response = await fetch('/api/get-user-articles');
+      const response = await fetch('/api/get-dashboard-stats');
       
       if (!response.ok) {
-        throw new Error(`Failed to fetch articles: ${response.statusText}`);
+        throw new Error(`Failed to fetch dashboard stats: ${response.statusText}`);
       }
       
       const data = await response.json();
       
       if (data.success) {
-        setUserArticles(data.articles || []);
+        // Update all dashboard stats at once
+        setDashboardStats(data.stats);
+        setUserArticles(data.stats.recentArticles || []);
+        
+        // Check for data inconsistency - if we have a count but no recent articles
+        if (data.stats.articlesAnalyzed.count > 0 && 
+            (!data.stats.recentArticles || data.stats.recentArticles.length === 0)) {
+          console.warn('Data inconsistency detected: Non-zero article count but empty recent articles list');
+          
+          // Try to fix the data
+          await runArticleVerification();
+        }
       } else {
-        throw new Error(data.error || 'Failed to fetch articles');
+        throw new Error(data.error || 'Failed to fetch dashboard statistics');
       }
     } catch (error) {
-      console.error('Error fetching user articles:', error);
-      setArticlesError(error instanceof Error ? error.message : 'An error occurred while fetching your articles');
+      console.error('Error fetching dashboard stats:', error);
+      setArticlesError(error instanceof Error ? error.message : 'An error occurred while fetching your statistics');
     } finally {
       setLoadingArticles(false);
     }
   };
 
-  // Add this function after fetchUserArticles and before formatDate
+  // Add a function to run article verification
+  const runArticleVerification = async () => {
+    try {
+      console.log('Running article verification');
+      const response = await fetch('/api/verify-article-references');
+      
+      if (!response.ok) {
+        console.error('Article verification failed:', response.statusText);
+        return;
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        console.log('Article verification completed:', data.result);
+        
+        if (data.result.deleted > 0) {
+          // Refresh the dashboard stats after verification
+          await fetchDashboardStats();
+        }
+      }
+    } catch (error) {
+      console.error('Error during article verification:', error);
+    }
+  };
+
+  // Replace the fetchUserArticles with fetchDashboardStats in the useEffect
+  useEffect(() => {
+    if (user?.id) {
+      fetchDashboardStats();
+    }
+  }, [user?.id]);
+
+  // Function to handle viewing an article summary
+  const handleViewArticleSummary = async (articleId: string | undefined, articleUrl: string) => {
+    if (!articleId) {
+      setNotification({
+        show: true,
+        message: "Unable to view article summary: Missing article ID"
+      });
+      return;
+    }
+
+    try {
+      // Show a simple loading spinner instead of the multi-step loading overlay
+      setIsAnalyzing(true);
+      
+      // Fetch the article summary from the database
+      const response = await fetch(`/api/get-article-summary?id=${articleId}`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch article summary: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        // Log the structure of the article data
+        console.log("Article data received:", {
+          id: data.article.id,
+          title: data.article.title,
+          hasVisualSummary: !!data.article.visual_summary,
+          visualSummaryType: typeof data.article.visual_summary,
+          visualSummaryIsArray: Array.isArray(data.article.visual_summary),
+          visualSummaryLength: Array.isArray(data.article.visual_summary) ? data.article.visual_summary.length : 0,
+          visualSummaryData: data.article.visual_summary ? JSON.stringify(data.article.visual_summary).substring(0, 100) : 'null',
+          hasKeywords: !!data.article.keywords,
+          keywordsLength: Array.isArray(data.article.keywords) ? data.article.keywords.length : 0,
+          hasRelatedResearch: !!data.article.related_research
+        });
+        
+        // Set article data for display
+        setArticleData(data.article);
+        
+        // Set URL for viewing the original article
+        setUrl(articleUrl);
+        
+        // Extract keywords for related research
+        const keywords = data.article.keywords || [];
+        if (keywords.length > 0) {
+          setExtractedKeywords(keywords);
+          // Optionally fetch related research if available
+          if (data.article.related_research) {
+            setRelatedResearch({
+              supporting: data.article.related_research.supporting || [],
+              contradictory: data.article.related_research.contradictory || [],
+              totalFound: (data.article.related_research.supporting || []).length + 
+                         (data.article.related_research.contradictory || []).length,
+              searchKeywords: keywords
+            });
+          }
+        }
+        
+        // Show the article summary
+        setShowArticleSummary(true);
+        
+      } else {
+        throw new Error(data.error || 'Failed to fetch article summary');
+      }
+    } catch (error) {
+      console.error('Error fetching article summary:', error);
+      setAnalysisError(error instanceof Error ? error.message : 'An error occurred while fetching the article summary');
+    } finally {
+      // Hide loading spinner
+      setIsAnalyzing(false);
+    }
+  };
+
+  // Function to toggle bookmarks
   const toggleBookmark = async (articleId: string) => {
     try {
       // Call the API to toggle bookmark status
@@ -233,7 +400,24 @@ export default function DashboardPage() {
     }
   };
 
-  // Format a date for display
+  // Function to handle going back to dashboard
+  const handleBackToDashboard = () => {
+    setShowArticleSummary(false);
+    setArticleData(null);
+    setExtractedKeywords([]);
+    setRelatedResearch({
+      supporting: [],
+      contradictory: [],
+      totalFound: 0,
+      searchKeywords: []
+    });
+    setIsAnalyzing(false);
+    setShowLoadingOverlay(false);
+    // Reset the URL input field
+    setUrl(''); 
+  };
+
+  // Function to format date
   const formatDate = (dateString?: string) => {
     if (!dateString) return '';
     
@@ -277,7 +461,7 @@ export default function DashboardPage() {
     
     // Reset states
     setIsAnalyzing(true);
-    setShowLoadingOverlay(true);
+    setShowLoadingOverlay(true); // Show the detailed loading overlay for new analyses
     setAnalysisError('');
     setCurrentStep("retrievingContent");
     setCompletedSteps([]);
@@ -315,7 +499,39 @@ export default function DashboardPage() {
       });
       
       if (!response.ok) {
-        throw new Error(`Failed to fetch article: ${response.statusText}`);
+        // Attempt to get more information from the error response
+        let errorMessage = `Failed to fetch article: ${response.statusText}`;
+        try {
+          const errorResponse = await response.text();
+          // Check if error response contains valid JSON
+          try {
+            const errorJson = JSON.parse(errorResponse);
+            if (errorJson.error) {
+              errorMessage = errorJson.error;
+            }
+          } catch (e) {
+            // If not JSON, use the text response if it's not empty
+            if (errorResponse && errorResponse.trim()) {
+              errorMessage = errorResponse;
+            }
+          }
+        } catch (e) {
+          // If we can't get the response text, stick with the status message
+          console.error('Could not parse error response:', e);
+        }
+
+        // Special handling for specific HTTP status codes
+        if (response.status === 502) {
+          errorMessage = "Bad Gateway: The article processing server is unavailable or the URL may be inaccessible. Please try again later or try a different article.";
+        } else if (response.status === 403) {
+          errorMessage = "Access Forbidden: This article may be behind a paywall or requires special access.";
+        } else if (response.status === 404) {
+          errorMessage = "Not Found: The article URL could not be found. Please check the URL and try again.";
+        } else if (response.status === 429) {
+          errorMessage = "Too Many Requests: Request rate limit exceeded. Please try again in a few minutes.";
+        }
+
+        throw new Error(errorMessage);
       }
       
       // Content retrieved successfully
@@ -325,9 +541,11 @@ export default function DashboardPage() {
       // Check content type to determine how to process the response
       const contentType = response.headers.get('content-type');
       
-      // Handle different content types appropriately
-      let keywords: string[] = [];
-      let articleResult: any = null;
+      console.log('[Dashboard] Received Content-Type from /api/summarize-article:', contentType);
+      
+      // --- Strict JSON Handling --- 
+      let keywords: string[] = []; // Keep local variable
+      let articleResult: any = null; // Keep local variable
       
       if (contentType && contentType.includes('application/json')) {
         // Handle JSON response
@@ -337,42 +555,55 @@ export default function DashboardPage() {
           throw new Error(data.error);
         }
         
-        // Store the data
-        articleResult = data;
+        // Store the data in local variable first
+        articleResult = data; 
         
-        // Extract keywords if available
-        if (data.keywords && data.keywords.length > 0) {
-          keywords = data.keywords;
+        // Extract keywords if available (handle potential empty array)
+        if (data.keywords && Array.isArray(data.keywords)) {
+            keywords = data.keywords; // Assign to local variable
+            console.log(`[Dashboard] Extracted keywords from JSON: Count=${keywords.length}`);
+        } else {
+            console.log('[Dashboard] Keywords missing or not an array in JSON response.');
         }
-      } else if (contentType && (contentType.includes('text/plain') || contentType.includes('text/markdown') || contentType.includes('text/event-stream'))) {
-        // Handle text/markdown/stream response
-        const text = await response.text();
-        
-        // Store the text response
-        articleResult = { rawText: text };
-        
-        // Try to extract keywords using regex from markdown format
-        const keywordsMatch = text.match(/### Keywords:\s*\n([\s\S]*?)(?=###|$)/i);
-        if (keywordsMatch && keywordsMatch[1]) {
-          keywords = keywordsMatch[1].split(',')
-            .map(k => k.trim())
-            .filter(k => k.length > 0);
-        }
+      } else {
+        // If not JSON, throw an error
+        const responseText = await response.text().catch(() => '(Could not read response body)'); // Try to get text for error message
+        console.error('[Dashboard] Unexpected Content-Type from /api/summarize-article:', contentType, responseText);
+        throw new Error(`Unexpected response format from summary API. Expected JSON but received ${contentType || 'unknown'}.`);
       }
-      
+       
       updateLoadingStep("generatingSummary", true);
       
-      // Store the article data
-      setArticleData(articleResult);
+      // --- Set State AFTER processing --- 
+      setArticleData(articleResult); // Set main article data state
+      setExtractedKeywords(keywords); // Set extracted keywords state (even if empty)
       
-      // Use keywords to find related research
+      // --- DEBUG LOG: Check keywords before the conditional fetch --- 
+      // Note: We check the local 'keywords' variable here, as state updates might be async
+      console.log('[Dashboard] Checking keywords before fetch:', { 
+        keywordsVariable: keywords, 
+        articleResultKeywords: articleResult?.keywords, 
+        articleResultKeys: articleResult ? Object.keys(articleResult) : null
+      });
+      
+      // --- Use local 'keywords' variable for the check --- 
       if (keywords.length > 0) {
-        setExtractedKeywords(keywords);
+        // We already set extractedKeywords state above, no need to set again
+        // setExtractedKeywords(keywords); 
         try {
+          // Extract title and findings for better classification context
+          const mainArticleTitle = articleResult?.originalArticleTitle || articleResult?.title || '';
+          const mainArticleFindings = (articleResult?.visualSummary || articleResult?.visual_summary || [])
+            .map((item: { point: string }) => item.point)
+            .filter((point: string) => point);
+
           // Now fetch related research
-          updateLoadingStep("generatingSummary", true);
+          updateLoadingStep("generatingSummary", true); // Move these? They were called earlier
           updateLoadingStep("extractingKeywords", true);
           updateLoadingStep("searchingSimilarArticles");
+          
+          // --- DEBUG LOG: Confirm fetch attempt --- 
+          console.log('[Dashboard] Attempting to fetch related research...');
           
           const researchResponse = await fetch('/api/semantic-scholar-search', {
             method: 'POST',
@@ -380,28 +611,75 @@ export default function DashboardPage() {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              keywords,
+              keywords, // Pass the local keywords variable
               url,
+              mainArticleTitle,
+              mainArticleFindings,
             }),
           });
   
           if (!researchResponse.ok) {
-            const errorText = await researchResponse.text();
-            throw new Error(`Failed to fetch related research: ${researchResponse.statusText || errorText}`);
+            let errorMessage = `Failed to fetch related research: ${researchResponse.statusText}`;
+            
+            try {
+              const errorText = await researchResponse.text();
+              
+              // Try to parse as JSON first
+              try {
+                const errorJson = JSON.parse(errorText);
+                if (errorJson.error) {
+                  errorMessage = `Failed to fetch related research: ${errorJson.error}`;
+                }
+              } catch (jsonError) {
+                // If not JSON, use text if it's meaningful
+                if (errorText && errorText.trim() && errorText.length < 200) {
+                  errorMessage = `Failed to fetch related research: ${errorText}`;
+                }
+              }
+            } catch (textError) {
+              console.error('Could not extract error text from response:', textError);
+            }
+            
+            // Special handling for specific status codes
+            if (researchResponse.status === 500) {
+              errorMessage = "Failed to fetch related research: Internal server error. This might be due to a temporary issue with our research database. The article summary is still available.";
+              
+              // For server errors, don't throw - just store the error and continue
+              console.warn(errorMessage);
+              
+              // Store error but continue with article display
+              setRelatedResearch({
+                supporting: [],
+                contradictory: [],
+                totalFound: 0,
+                error: errorMessage,
+                searchKeywords: keywords, // Use local keywords for error state
+              });
+              
+              // Mark these steps as complete to proceed with the UI
+              updateLoadingStep("searchingSimilarArticles", true);
+              updateLoadingStep("assessingResearch", true);
+              return; // Skip the throw and continue processing
+            }
+            
+            throw new Error(errorMessage);
           }
   
           const researchData = await researchResponse.json();
           
+          // --- DEBUG LOG: Check API response data --- 
+          console.log('[Dashboard] Related Research API Response:', researchData);
+
           if (researchData.error) {
             throw new Error(researchData.error);
           }
           
-          // Store the related research
+          // Store the related research state
           setRelatedResearch({
             supporting: researchData.supporting || [],
             contradictory: researchData.contradictory || [],
             totalFound: researchData.totalFound || 0,
-            searchKeywords: keywords,
+            searchKeywords: keywords, // Use local keywords for state
           });
           
           updateLoadingStep("searchingSimilarArticles", true);
@@ -413,7 +691,7 @@ export default function DashboardPage() {
           setRelatedResearch(prev => ({
             ...prev,
             error: researchError.message || 'Error fetching related research',
-            searchKeywords: keywords,
+            searchKeywords: keywords, // Use local keywords for error state
           }));
           
           // Mark as complete even with error to proceed
@@ -431,84 +709,50 @@ export default function DashboardPage() {
       
     } catch (error) {
       console.error('Error analyzing article:', error);
+      // --- DEBUG LOG: Check if execution jumps to catch block ---
+      console.log('[Dashboard] Caught error in handleAnalyzeSubmit:', error instanceof Error ? error.message : error);
       const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
       setAnalysisError(errorMessage);
       setShowLoadingOverlay(false);
       setIsAnalyzing(false);
     }
   };
-  
-  // Function to return to dashboard from article summary
-  const handleBackToDashboard = () => {
-    setShowArticleSummary(false);
-    setArticleData(null);
+
+  // Effect to clear URL input on initial mount and back navigation
+  useEffect(() => {
+    // Clear the URL input when the dashboard mounts
     setUrl('');
-  };
-
-  // Add a function to fetch related research (for retry functionality)
-  const fetchRelatedResearch = async (keywords: string[]) => {
-    if (!keywords || keywords.length === 0) return;
-    
-    try {
-      updateLoadingStep("searchingSimilarArticles");
-      
-      const response = await fetch('/api/semantic-scholar-search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          keywords,
-          url,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to fetch related research: ${response.statusText || errorText}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.error) {
-        throw new Error(data.error);
-      }
-      
-      // Store the related research
-      setRelatedResearch({
-        supporting: data.supporting || [],
-        contradictory: data.contradictory || [],
-        totalFound: data.totalFound || 0,
-        searchKeywords: keywords,
-      });
-      
-      updateLoadingStep("searchingSimilarArticles", true);
-      updateLoadingStep("assessingResearch", true);
-    } catch (error: any) {
-      console.error('Error fetching related research:', error);
-      
-      // Store error but continue with article display
-      setRelatedResearch(prev => ({
-        ...prev,
-        error: error.message || 'Error fetching related research',
-        searchKeywords: keywords,
-      }));
-      
-      // Mark as complete even with error to proceed
-      updateLoadingStep("searchingSimilarArticles", true);
-      updateLoadingStep("assessingResearch", true);
-    }
-  };
+  }, []); // Empty dependency array ensures this runs only once on mount
 
   return (
     <>
-      {/* Loading Overlay - keep this visible during analysis */}
-      <LoadingOverlay 
-        isVisible={showLoadingOverlay} 
-        currentStep={currentStep} 
-        completedSteps={completedSteps} 
-        keywords={extractedKeywords}
-      />
+      {/* Loading Overlay for analyzing new articles */}
+      {showLoadingOverlay && (
+        <LoadingOverlay 
+          isVisible={showLoadingOverlay} 
+          currentStep={currentStep} 
+          completedSteps={completedSteps} 
+          keywords={extractedKeywords}
+        />
+      )}
+      
+      {/* Simple loading spinner for viewing existing articles */}
+      {isAnalyzing && !showLoadingOverlay && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg shadow-xl p-6 flex flex-col items-center">
+            <div className="h-12 w-12 border-t-4 border-b-4 border-blue-500 rounded-full animate-spin mb-4"></div>
+            <p className="text-gray-700 font-medium">Loading article summary...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Centralized Dashboard Loading Spinner */}
+      {loadingArticles && !showArticleSummary && !showLoadingOverlay && !isAnalyzing && (
+        <div className="fixed inset-0 bg-white z-50 flex flex-col items-center justify-center">
+          <div className="h-16 w-16 border-t-4 border-b-4 border-blue-500 rounded-full animate-spin mb-6"></div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Loading Dashboard...</h2>
+        </div>
+      )}
 
       {/* Conditionally render either the dashboard or the article summary */}
       {showArticleSummary && articleData ? (
@@ -533,15 +777,14 @@ export default function DashboardPage() {
             </Button>
           </div>
           
-          {/* Article Summary Content - We'll implement the ArticleSummaryContent component next */}
+          {/* Article Summary Content */}
           <ArticleSummaryContent 
             articleData={articleData} 
             relatedResearch={relatedResearch}
             url={url}
             retryRelatedResearch={() => {
-              if (extractedKeywords.length > 0) {
-                // Implement retry functionality for related research
-                fetchRelatedResearch(extractedKeywords);
+              if (articleData && articleData.id) {
+                handleViewArticleSummary(articleData.id, url);
               }
             }}
           />
@@ -551,7 +794,7 @@ export default function DashboardPage() {
         <div className="dashboard-content">
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-            <p className="text-gray-600">Hi {firstName}. Here's your research overview.</p>
+            <p className="text-gray-600">Hi {dashboardStats.user.firstName || firstName}. Here's your research overview.</p>
           </div>
 
           {/* Research Activity Summary */}
@@ -563,13 +806,13 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent className="pt-0">
                 <div className="flex justify-between items-center">
-                  <h3 className="text-3xl font-bold text-gray-900">24</h3>
+                  <h3 className="text-3xl font-bold text-gray-900">{dashboardStats.articlesAnalyzed.count}</h3>
                   <div className="h-10 w-10 rounded-full flex items-center justify-center bg-blue-100">
                     <LucideFileText className="h-5 w-5 text-blue-600" />
                   </div>
                 </div>
                 <div className="mt-2 text-xs text-gray-500 flex items-center">
-                  <span className="text-green-500 font-medium">+12% </span>
+                  <span className="text-green-500 font-medium">+{dashboardStats.articlesAnalyzed.growthPercentage}% </span>
                   <span className="ml-1">from last month</span>
                 </div>
               </CardContent>
@@ -601,14 +844,14 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent className="pt-0">
                 <div className="flex justify-between items-center">
-                  <h3 className="text-3xl font-bold text-gray-900">12</h3>
+                  <h3 className="text-3xl font-bold text-gray-900">{dashboardStats.articlesAnalyzed.savedCount}</h3>
                   <div className="h-10 w-10 rounded-full flex items-center justify-center bg-green-100">
                     <LucideBookmark className="h-5 w-5 text-green-600" />
                   </div>
                 </div>
                 <div className="mt-2 text-xs text-gray-500 flex items-center">
                   <LucideClock className="h-3 w-3 mr-1" />
-                  <span>Last saved 2 days ago</span>
+                  <span>Last saved {dashboardStats.lastSavedDaysAgo} days ago</span>
                 </div>
               </CardContent>
             </Card>
@@ -656,19 +899,14 @@ export default function DashboardPage() {
               </Link>
             </div>
 
-            {loadingArticles ? (
-              <div className="text-center py-8">
-                <div className="h-6 w-6 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mx-auto mb-4"></div>
-                <p className="text-gray-600">Loading your articles...</p>
-              </div>
-            ) : articlesError ? (
+            {articlesError ? (
               <div className="text-center py-8 text-red-600">
                 <p>{articlesError}</p>
                 <Button 
                   variant="outline" 
                   size="sm" 
                   className="mt-2"
-                  onClick={fetchUserArticles}
+                  onClick={fetchDashboardStats}
                 >
                   Retry
                 </Button>
@@ -680,15 +918,17 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
-                {userArticles.slice(0, 4).map((article: ArticleSummary, index: number) => (
+                {userArticles.slice(0, 8).map((article: ArticleSummary, index: number) => (
                   <div key={article.id || index}>
                     <Card className="overflow-hidden hover:shadow-md transition-shadow h-full border border-gray-200 bg-white">
                       <CardHeader className="p-4 pb-2 border-b bg-white">
                         <div className="flex justify-between items-start">
                           <div>
-                            <CardTitle className="text-base line-clamp-2">{article.title}</CardTitle>
+                            <CardTitle className="text-base line-clamp-2">
+                              {article.originalArticleTitle || article.originalTitle || article.summarized_title || article.title || getPathEndFromUrl(article.url) || "Untitled Article"}
+                            </CardTitle>
                             <CardDescription className="text-xs mt-1">
-                              {article.source || 'Unknown Source'} • {article.publish_date ? new Date(article.publish_date).toLocaleDateString() : 'No date'}
+                              {article.source || getSourceFromUrl(article.url)} • {article.publish_date ? new Date(article.publish_date).toLocaleDateString() : 'No date'}
                             </CardDescription>
                           </div>
                           <DropdownMenu>
@@ -721,7 +961,26 @@ export default function DashboardPage() {
                         </div>
                       </CardHeader>
                       <CardContent className="p-4 pt-3">
-                        <p className="text-sm text-gray-600 line-clamp-2 mb-3">{article.summary || 'No summary available'}</p>
+                        {/* Display first two key findings from visual_summary if available */}
+                        {(() => {
+                          const visualSummaryData = article.visualSummary || article.visual_summary;
+                          if (visualSummaryData && Array.isArray(visualSummaryData) && visualSummaryData.length > 0) {
+                            return (
+                              <div className="space-y-2 mb-3">
+                                {visualSummaryData.slice(0, 2).map((item: { emoji: string; point: string }, idx: number) => (
+                                  <div key={idx} className="flex items-start gap-2">
+                                    <div className="text-lg">{item.emoji}</div>
+                                    <p className="text-sm text-gray-700 line-clamp-2">{item.point}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          } else {
+                            return (
+                              <p className="text-sm text-gray-600 line-clamp-2 mb-3">{article.summary || 'No summary available'}</p>
+                            );
+                          }
+                        })()}
                         <div className="flex flex-wrap gap-1">
                           {article.keywords && Array.isArray(article.keywords) && article.keywords.slice(0, 3).map((keyword: string, idx: number) => (
                             <Link href={`/dashboard/research-topic/1`} key={idx}>
@@ -745,11 +1004,14 @@ export default function DashboardPage() {
                           <LucideCalendar className="inline h-3 w-3 mr-1" />
                           Analyzed {formatDate(article.created_at)}
                         </div>
-                        <Link href={`/article-summary?url=${encodeURIComponent(article.url)}`}>
-                          <Button variant="ghost" size="sm" className="h-8 text-[#1e3a6d] hover:bg-[#1e3a6d]/10">
-                            View
-                          </Button>
-                        </Link>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-8 text-[#1e3a6d] hover:bg-[#1e3a6d]/10"
+                          onClick={() => handleViewArticleSummary(article.id, article.url)}
+                        >
+                          View
+                        </Button>
                       </CardFooter>
                     </Card>
                   </div>
@@ -758,85 +1020,89 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Trending Research Topics */}
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-gray-900">Trending Research Topics</h2>
-            </div>
+          {/* Hide Trending Research Topics section */}
+          {false && (
+            <div className="mb-8">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold text-gray-900">Trending Research Topics</h2>
+              </div>
 
-            <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
-              <div className="flex flex-wrap gap-2">
-                {trendingTopics.map((topic: { name: string; isHot: boolean }, index: number) => (
-                  <Link href={`/dashboard/research-topic/1`} key={index}>
-                    <Badge
-                      className={`text-sm py-1.5 px-3 cursor-pointer ${topic.isHot ? "bg-red-100 text-red-800 hover:bg-red-200" : "bg-blue-50 text-[#1e3a6d] hover:bg-blue-100"}`}
-                    >
-                      {topic.name}
-                      {topic.isHot && <span className="ml-1">🔥</span>}
-                    </Badge>
-                  </Link>
+              <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+                <div className="flex flex-wrap gap-2">
+                  {trendingTopics.map((topic: { name: string; isHot: boolean }, index: number) => (
+                    <Link href={`/dashboard/research-topic/1`} key={index}>
+                      <Badge
+                        className={`text-sm py-1.5 px-3 cursor-pointer ${topic.isHot ? "bg-red-100 text-red-800 hover:bg-red-200" : "bg-blue-50 text-[#1e3a6d] hover:bg-blue-100"}`}
+                      >
+                        {topic.name}
+                        {topic.isHot && <span className="ml-1">🔥</span>}
+                      </Badge>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Hide Suggested For You section */}
+          {false && (
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold text-gray-900">Suggested For You</h2>
+                <Link href="/dashboard/suggestions">
+                  <Button variant="ghost" size="sm" className="text-[#1e3a6d] hover:bg-[#1e3a6d]/10">
+                    More Suggestions
+                  </Button>
+                </Link>
+              </div>
+
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                {suggestedArticles.map((article: any, index: number) => (
+                  <div key={index}>
+                    <Card className="overflow-hidden hover:shadow-md transition-shadow h-full border border-gray-200">
+                      <CardHeader className="p-4 pb-2">
+                        <div>
+                          <CardTitle className="text-base line-clamp-2">{article.title}</CardTitle>
+                          <CardDescription className="text-xs mt-1">
+                            {article.journal} • {article.date}
+                          </CardDescription>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="p-4 pt-2">
+                        <p className="text-sm text-gray-600 line-clamp-2 mb-3">{article.summary}</p>
+                        <div className="flex flex-wrap gap-1 mb-3">
+                          {article.keywords.slice(0, 3).map((keyword: string, idx: number) => (
+                            <Badge
+                              key={idx}
+                              variant="outline"
+                              className="bg-blue-50 text-[#1e3a6d] text-xs hover:bg-blue-100"
+                            >
+                              {keyword}
+                            </Badge>
+                          ))}
+                        </div>
+                        <p className="text-xs text-gray-500 italic">{article.recommendation}</p>
+                      </CardContent>
+                      <CardFooter className="p-4 pt-2 flex justify-end">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-[#1e3a6d] border-[#1e3a6d] hover:bg-[#1e3a6d]/10"
+                          onClick={() => {
+                            // This would normally fetch the URL for this article
+                            // For now, we'll just redirect to the demo page
+                            router.push('/demo')
+                          }}
+                        >
+                          Analyze
+                        </Button>
+                      </CardFooter>
+                    </Card>
+                  </div>
                 ))}
               </div>
             </div>
-          </div>
-
-          {/* Suggested Articles */}
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-gray-900">Suggested For You</h2>
-              <Link href="/dashboard/suggestions">
-                <Button variant="ghost" size="sm" className="text-[#1e3a6d] hover:bg-[#1e3a6d]/10">
-                  More Suggestions
-                </Button>
-              </Link>
-            </div>
-
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {suggestedArticles.map((article: any, index: number) => (
-                <div key={index}>
-                  <Card className="overflow-hidden hover:shadow-md transition-shadow h-full border border-gray-200">
-                    <CardHeader className="p-4 pb-2">
-                      <div>
-                        <CardTitle className="text-base line-clamp-2">{article.title}</CardTitle>
-                        <CardDescription className="text-xs mt-1">
-                          {article.journal} • {article.date}
-                        </CardDescription>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="p-4 pt-2">
-                      <p className="text-sm text-gray-600 line-clamp-2 mb-3">{article.summary}</p>
-                      <div className="flex flex-wrap gap-1 mb-3">
-                        {article.keywords.slice(0, 3).map((keyword: string, idx: number) => (
-                          <Badge
-                            key={idx}
-                            variant="outline"
-                            className="bg-blue-50 text-[#1e3a6d] text-xs hover:bg-blue-100"
-                          >
-                            {keyword}
-                          </Badge>
-                        ))}
-                      </div>
-                      <p className="text-xs text-gray-500 italic">{article.recommendation}</p>
-                    </CardContent>
-                    <CardFooter className="p-4 pt-2 flex justify-end">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="text-[#1e3a6d] border-[#1e3a6d] hover:bg-[#1e3a6d]/10"
-                        onClick={() => {
-                          // This would normally fetch the URL for this article
-                          // For now, we'll just redirect to the demo page
-                          router.push('/demo')
-                        }}
-                      >
-                        Analyze
-                      </Button>
-                    </CardFooter>
-                  </Card>
-                </div>
-              ))}
-            </div>
-          </div>
+          )}
 
           {/* Notification */}
           {notification && notification.show && (

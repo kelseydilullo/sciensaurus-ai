@@ -44,44 +44,6 @@ export async function POST(request: NextRequest) {
 
     if (!userId) {
       console.log('No authenticated user found, will store article summary only');
-    } else {
-      // Ensure user exists in users table
-      try {
-        const adminClient = createAdminClient();
-        
-        // Check if user exists
-        const { data: existingUser, error: checkError } = await adminClient
-          .from('users')
-          .select('id')
-          .eq('id', userId)
-          .limit(1)
-          .single();
-          
-        if (checkError && checkError.code === 'PGRST116') {
-          // User doesn't exist, create it
-          console.log(`Creating new user in users table: ${userId}`);
-          const { error: insertError } = await adminClient
-            .from('users')
-            .insert({
-              id: userId,
-              email: email,
-              created_at: new Date().toISOString()
-            });
-            
-          if (insertError) {
-            console.error('Error creating user record:', insertError);
-          } else {
-            console.log(`User ${userId} created successfully`);
-          }
-        } else if (checkError) {
-          console.error('Error checking for user existence:', checkError);
-        } else {
-          console.log(`User ${userId} already exists in users table`);
-        }
-      } catch (userError) {
-        console.error('Error ensuring user exists:', userError);
-        // Continue anyway - we'll still store the article
-      }
     }
 
     // Parse the request body
@@ -106,6 +68,7 @@ export async function POST(request: NextRequest) {
     const { 
       url, 
       title, 
+      summarized_title,
       source,
       publish_date,
       summary,
@@ -193,6 +156,7 @@ export async function POST(request: NextRequest) {
       // Prepare update data
       const updateData = {
         title,
+        summarized_title,
         source,
         publish_date: validatedPublishDate,
         summary,
@@ -206,6 +170,7 @@ export async function POST(request: NextRequest) {
       
       console.log('Update data prepared:', {
         hasTitle: !!updateData.title,
+        hasSummarizedTitle: !!updateData.summarized_title,
         hasSource: !!updateData.source,
         hasPublishDate: !!updateData.publish_date,
         hasSummary: !!updateData.summary,
@@ -241,6 +206,7 @@ export async function POST(request: NextRequest) {
       const insertData = {
         url,
         title,
+        summarized_title,
         source,
         publish_date: validatedPublishDate,
         summary,
@@ -254,6 +220,7 @@ export async function POST(request: NextRequest) {
       console.log('Insert data prepared:', {
         hasUrl: !!insertData.url,
         hasTitle: !!insertData.title,
+        hasSummarizedTitle: !!insertData.summarized_title,
         hasSource: !!insertData.source,
         hasPublishDate: !!insertData.publish_date,
         hasSummary: !!insertData.summary,
@@ -292,6 +259,23 @@ export async function POST(request: NextRequest) {
     let userArticle = null;
     if (userId && articleSummaryId) {
       console.log(`Recording user interaction for user ${userId} with article ${articleSummaryId}`);
+      
+      // First verify that the article actually exists
+      const { data: articleExists, error: verifyError } = await adminClient
+        .from('article_summaries')
+        .select('id')
+        .eq('id', articleSummaryId)
+        .single();
+        
+      if (verifyError || !articleExists) {
+        console.error(`Cannot create user-article relation: Article ${articleSummaryId} does not exist or cannot be accessed`);
+        return NextResponse.json({
+          success: true,
+          articleSummaryId,
+          userArticle: null,
+          warning: "Could not create user-article relationship due to missing article reference"
+        });
+      }
       
       // Check if relation already exists
       const { data: existingRelation, error: relationCheckError } = await adminClient

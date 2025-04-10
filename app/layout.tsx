@@ -61,7 +61,7 @@ export default function RootLayout({
         >
           <AuthProvider>
             {children}
-            <DebugTools />
+            {/* <DebugTools /> */}
           </AuthProvider>
         </ThemeProvider>
       </body>

@@ -65,6 +65,43 @@ This project uses the Vercel AI SDK to integrate with AI providers. Here's how i
    - The analysis is streamed back to the client
    - The client displays the analysis in real-time
 
+## AI Tracing
+
+This project includes a built-in AI tracing system that logs details about AI interactions. This is useful for:
+
+1. **Debugging**: Understand exactly what was sent to and received from the AI
+2. **Performance Monitoring**: Track response times and detect slow operations
+3. **Cost Analysis**: See which AI operations are being used most frequently
+4. **Prompt Engineering**: Study and refine the prompts that produce the best results
+
+### Setting Up AI Tracing
+
+1. Enable tracing by adding these variables to your `.env.local` file:
+   ```
+   # AI tracing configuration
+   ENABLE_AI_TRACING=true
+   TRACE_LOG_DIR=./logs/ai-traces
+   ```
+
+2. Traces will be saved as JSON files in the specified directory.
+
+3. Each trace includes:
+   - Request details (timestamp, model, parameters)
+   - Response metadata (duration, success/failure)
+   - Error information when applicable
+
+### Analyzing Traces
+
+You can analyze the traces using any JSON viewer or create custom visualization tools.
+Common patterns to look for:
+- Long response times that might impact user experience
+- Recurring errors with specific prompts or parameters
+- Correlations between prompt structure and response quality
+
+### Implementation
+
+The tracing system is implemented in `utils/ai-config.ts` and integrated with the AI SDK in the API routes.
+
 ## Customizing
 
 - **System Prompt**: You can customize the AI system prompt in `app/api/analyze-article/route.ts`.

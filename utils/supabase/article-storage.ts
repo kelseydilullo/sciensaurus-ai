@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/client';
+import { createAdminClient } from '@/utils/supabase/admin';
 
 /**
  * Service module for storing and retrieving article summaries from Supabase
@@ -10,6 +11,7 @@ export interface ArticleSummary {
   id?: string;
   url: string;
   title: string;
+  summarized_title?: string;
   source?: string;
   publish_date?: string;
   summary?: string;
@@ -34,6 +36,7 @@ export interface UserArticle {
 
 // Interface for the join between users_articles and article_summaries
 interface UserArticleJoin {
+  id?: string;
   is_bookmarked?: boolean;
   view_count?: number;
   last_viewed_at?: string;
@@ -457,5 +460,354 @@ export async function ensureUserExists(userId: string, email: string): Promise<a
   } catch (error) {
     console.error('Error in ensureUserExists:', error instanceof Error ? error.message : 'Unknown error');
     throw error; // Re-throw to allow handling at the API level
+  }
+}
+
+/**
+ * Get comprehensive dashboard statistics for a user
+ * @param userId The user's ID
+ * @param recentArticlesLimit Number of recent articles to fetch
+ * @returns Dashboard statistics including articles count, recent articles, and more
+ */
+export async function getDashboardStats(
+  userId: string,
+  recentArticlesLimit: number = 4
+): Promise<{
+  articlesAnalyzed: {
+    count: number;
+    growthPercentage: number;
+    savedCount: number;
+  };
+  recentArticles: Array<ArticleSummary & { is_bookmarked?: boolean; view_count?: number }>;
+  lastSavedDaysAgo: number;
+  debug?: any; // Include debug info in development
+} | null> {
+  try {
+    console.log(`Getting dashboard stats for user: ${userId}`);
+    const startTime = Date.now();
+    // Use admin client to bypass RLS policies
+    const supabase = createAdminClient();
+    
+    // Debug storage for query details
+    const debugInfo: any = {
+      queries: {},
+      timings: {},
+      userId
+    };
+    
+    // First check if the user has any articles at all
+    const checkQuery = supabase
+      .from('users_articles')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId);
+    
+    debugInfo.queries.checkQuery = checkQuery.toString();
+    const checkStart = Date.now();
+    const { count: checkCount, error: checkError } = await checkQuery;
+    debugInfo.timings.checkQuery = Date.now() - checkStart;
+    
+    if (checkError) {
+      console.error('Error checking if user has any articles:', checkError);
+      debugInfo.errors = debugInfo.errors || {};
+      debugInfo.errors.checkQuery = {
+        code: checkError.code,
+        message: checkError.message,
+        details: checkError.details
+      };
+    } else {
+      console.log(`User ${userId} has ${checkCount || 0} articles`);
+      debugInfo.articleCount = checkCount;
+    }
+    
+    // Use Promise.all to run multiple queries in parallel for efficiency
+    console.log('Running parallel dashboard queries...');
+    
+    // Prepare queries with detailed logging
+    const countQuery = supabase
+      .from('users_articles')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+    
+    const recentArticlesQuery = supabase
+      .from('users_articles')
+      .select(`
+        id,
+        is_bookmarked,
+        view_count,
+        last_viewed_at,
+        article_summary_id,
+        article_summary:article_summary_id(
+          id,
+          url,
+          title,
+          source,
+          publish_date,
+          summary,
+          visual_summary,
+          keywords,
+          created_at,
+          updated_at
+        )
+      `)
+      .eq('user_id', userId)
+      .order('last_viewed_at', { ascending: false })
+      .limit(recentArticlesLimit);
+      
+    const savedArticlesQuery = supabase
+      .from('users_articles')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('is_bookmarked', true);
+      
+    const lastSavedQuery = supabase
+      .from('users_articles')
+      .select('last_viewed_at')
+      .eq('user_id', userId)
+      .eq('is_bookmarked', true)
+      .order('last_viewed_at', { ascending: false })
+      .limit(1);
+    
+    // Store query strings for debugging
+    debugInfo.queries.countQuery = countQuery.toString();
+    debugInfo.queries.recentArticlesQuery = recentArticlesQuery.toString();
+    debugInfo.queries.savedArticlesQuery = savedArticlesQuery.toString();
+    debugInfo.queries.lastSavedQuery = lastSavedQuery.toString();
+    
+    // Run all queries in parallel with timing
+    const queryStartTime = Date.now();
+    const [countResult, recentArticlesResult, savedArticlesResult, lastSavedResult] = await Promise.all([
+      countQuery,
+      recentArticlesQuery,
+      savedArticlesQuery,
+      lastSavedQuery
+    ]);
+    debugInfo.timings.parallelQueries = Date.now() - queryStartTime;
+    
+    // Process results from parallel queries
+    const { count: totalArticles, error: countError } = countResult;
+    const { data: recentArticles, error: articlesError } = recentArticlesResult;
+    const { count: savedArticles, error: savedError } = savedArticlesResult;
+    const { data: lastSaved, error: lastSavedError } = lastSavedResult;
+    
+    // Log any errors but continue with what we have
+    debugInfo.errors = debugInfo.errors || {};
+    if (countError) {
+      console.error('Error counting user articles:', countError);
+      debugInfo.errors.countQuery = {
+        code: countError.code,
+        message: countError.message,
+        details: countError.details
+      };
+    }
+    
+    if (articlesError) {
+      console.error('Error getting recent articles:', articlesError);
+      debugInfo.errors.recentArticlesQuery = {
+        code: articlesError.code,
+        message: articlesError.message,
+        details: articlesError.details
+      };
+    } else {
+      console.log(`Retrieved ${recentArticles?.length || 0} recent articles`);
+      // Log IDs of recent articles for debugging
+      if (recentArticles && recentArticles.length > 0) {
+        debugInfo.recentArticleIds = recentArticles.map((item: any) => ({
+          id: item.id,
+          article_id: item.article_summary?.id,
+          has_summary: !!item.article_summary
+        }));
+      }
+    }
+    
+    if (savedError) {
+      console.error('Error counting saved articles:', savedError);
+      debugInfo.errors.savedArticlesQuery = {
+        code: savedError.code,
+        message: savedError.message,
+        details: savedError.details
+      };
+    }
+    
+    if (lastSavedError) {
+      console.error('Error getting last saved date:', lastSavedError);
+      debugInfo.errors.lastSavedQuery = {
+        code: lastSavedError.code,
+        message: lastSavedError.message,
+        details: lastSavedError.details
+      };
+    }
+    
+    // Format recent articles for display
+    const formattedRecentArticles = recentArticles?.map((item: {
+      id?: string;
+      is_bookmarked?: boolean;
+      view_count?: number;
+      last_viewed_at?: string;
+      article_summary?: ArticleSummary;
+    }) => {
+      // Add safety check for missing article_summary
+      if (!item.article_summary) {
+        console.warn(`Missing article_summary for users_articles record ${item.id}`);
+        return null;
+      }
+      
+      return {
+        ...item.article_summary,
+        is_bookmarked: item.is_bookmarked,
+        view_count: item.view_count
+      };
+    }).filter(Boolean) || [];
+    
+    // Add debug logging to see what's happening with the recent articles
+    console.log(`Found ${recentArticles?.length || 0} total user articles, formatted ${formattedRecentArticles.length} valid articles`);
+    if (recentArticles?.length > 0 && formattedRecentArticles.length === 0) {
+      console.warn('All recent articles had null article_summary references - check foreign key constraints');
+      // Log the raw data for debugging
+      console.log('Raw recent articles data:', JSON.stringify(recentArticles.map((item: any) => ({
+        id: item.id,
+        has_summary: !!item.article_summary,
+        article_id: item.article_summary?.id
+      })), null, 2));
+    }
+    
+    // Calculate days since last saved
+    let lastSavedDaysAgo = 0;
+    if (lastSaved && lastSaved.length > 0 && lastSaved[0].last_viewed_at) {
+      const lastSavedDate = new Date(lastSaved[0].last_viewed_at);
+      const now = new Date();
+      lastSavedDaysAgo = Math.floor((now.getTime() - lastSavedDate.getTime()) / (1000 * 60 * 60 * 24));
+    }
+    
+    // Calculate growth percentage (TODO: implement proper tracking for this)
+    // For now we're using a placeholder value, but this could be calculated based on
+    // historical data stored in another table or using a time-based query
+    const growthPercentage = 12; // Placeholder
+    
+    const responseTime = Date.now() - startTime;
+    console.log(`Dashboard stats retrieved in ${responseTime}ms`);
+    debugInfo.timings.total = responseTime;
+    
+    return {
+      articlesAnalyzed: {
+        count: totalArticles || 0,
+        growthPercentage,
+        savedCount: savedArticles || 0
+      },
+      recentArticles: formattedRecentArticles,
+      lastSavedDaysAgo,
+      debug: debugInfo
+    };
+  } catch (error) {
+    console.error('Error in getDashboardStats:', error);
+    return {
+      articlesAnalyzed: {
+        count: 0,
+        growthPercentage: 0,
+        savedCount: 0
+      },
+      recentArticles: [],
+      lastSavedDaysAgo: 0,
+      debug: { error: error instanceof Error ? error.message : String(error) }
+    };
+  }
+}
+
+/**
+ * Verify and repair user article relationships with missing article_summary references.
+ * This is a utility function to help recover from data integrity issues.
+ */
+export async function verifyUserArticleReferences(userId: string): Promise<{
+  fixed: number;
+  deleted: number;
+  total: number;
+  errors: any[];
+}> {
+  try {
+    console.log(`Verifying article references for user: ${userId}`);
+    const supabase = createClient();
+    const adminClient = createAdminClient();
+    
+    const result = {
+      fixed: 0,
+      deleted: 0,
+      total: 0,
+      errors: [] as any[]
+    };
+    
+    // Get all user's article relationships
+    const { data: userArticles, error: fetchError } = await supabase
+      .from('users_articles')
+      .select('id, article_summary_id')
+      .eq('user_id', userId);
+      
+    if (fetchError) {
+      console.error('Error fetching user articles:', fetchError);
+      result.errors.push({
+        operation: 'fetch',
+        error: fetchError.message
+      });
+      return result;
+    }
+    
+    if (!userArticles || userArticles.length === 0) {
+      console.log('No article relationships found for user');
+      return result;
+    }
+    
+    result.total = userArticles.length;
+    console.log(`Found ${userArticles.length} article relationships to verify`);
+    
+    // For each relationship, check if the article_summary exists
+    for (const relation of userArticles) {
+      try {
+        const { data: article, error: articleError } = await supabase
+          .from('article_summaries')
+          .select('id')
+          .eq('id', relation.article_summary_id)
+          .single();
+          
+        if (articleError || !article) {
+          console.warn(`Missing article summary for relation ${relation.id}, removing orphaned record`);
+          
+          // Remove the orphaned record
+          const { error: deleteError } = await adminClient
+            .from('users_articles')
+            .delete()
+            .eq('id', relation.id);
+            
+          if (deleteError) {
+            console.error(`Failed to delete orphaned record ${relation.id}:`, deleteError);
+            result.errors.push({
+              operation: 'delete',
+              relationId: relation.id,
+              error: deleteError.message
+            });
+          } else {
+            result.deleted++;
+          }
+        }
+      } catch (relationError) {
+        console.error(`Error processing relation ${relation.id}:`, relationError);
+        result.errors.push({
+          operation: 'verify',
+          relationId: relation.id,
+          error: relationError instanceof Error ? relationError.message : String(relationError)
+        });
+      }
+    }
+    
+    console.log(`Verification complete: ${result.deleted} orphaned records deleted`);
+    return result;
+  } catch (error) {
+    console.error('Error in verifyUserArticleReferences:', error);
+    return {
+      fixed: 0,
+      deleted: 0,
+      total: 0,
+      errors: [{ 
+        operation: 'general', 
+        error: error instanceof Error ? error.message : String(error) 
+      }]
+    };
   }
 } 

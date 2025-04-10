@@ -17,9 +17,9 @@ type AuthContextType = {
   user: UserWithMetadata | null;
   isLoading: boolean;
   error: string | null;
-  signIn: (email: string, password: string) => Promise<{ error: any; success?: boolean }>;
+  signIn: (email: string, password: string) => Promise<{ error: any; success: boolean }>;
   signUp: (email: string, password: string, firstName?: string, lastName?: string) => 
-    Promise<{ error: any; success?: boolean; emailConfirmed?: boolean }>;
+    Promise<{ error: any; success: boolean; emailConfirmed: boolean }>;
   signOut: () => Promise<{ error: any }>;
   resetPassword: (email: string) => Promise<{ error: any }>;
 };
@@ -43,44 +43,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
     }
   }, [session]);
-
-  // Sync user with users table
-  const syncUser = useCallback(async (session: Session | null) => {
-    if (session?.user) {
-      try {
-        // Add a small delay to ensure auth is fully established
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        console.log('Syncing user with users table...');
-        
-        // Simpler fetch with standard error checking
-        const response = await fetch('/api/sync-user');
-        const responseText = await response.text();
-        
-        try {
-          // Try to parse as JSON
-          const result = JSON.parse(responseText);
-          
-          if (response.ok) {
-            console.log('User sync successful:', result.success);
-          } else {
-            console.error('Failed to sync user:', response.status, response.statusText);
-            console.error('Error details:', result.error, result.details || '');
-            
-            // If there are RLS or permission issues, log them clearly
-            if (responseText.includes('Permission denied') || responseText.includes('RLS')) {
-              console.error('PERMISSION ERROR: Check your Supabase Row Level Security (RLS) policies for the users table');
-            }
-          }
-        } catch (jsonError) {
-          // If the response is not valid JSON, log the raw text
-          console.error('Invalid JSON response from sync-user API:', responseText);
-        }
-      } catch (error) {
-        console.error('Error syncing user:', error instanceof Error ? error.message : error);
-      }
-    }
-  }, []);
 
   useEffect(() => {
     // Check for active session on mount
@@ -113,21 +75,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     checkSession();
 
     // Set up auth state change listener
-    const subscription = AuthUtils.onAuthStateChange((session) => {
+    const subscription = AuthUtils.onAuthStateChange((session: Session | null) => {
       setSession(session);
       setIsLoading(false);
       
-      // Sync user whenever auth state changes
-      if (session?.user) {
-        syncUser(session);
-      }
+      // User sync removed - No longer needed
     });
 
     // Clean up subscription
     return () => {
       subscription.unsubscribe();
     };
-  }, [syncUser]);
+  }, []);
 
   async function signIn(email: string, password: string) {
     try {

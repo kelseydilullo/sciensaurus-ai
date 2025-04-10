@@ -1,0 +1,6 @@
+{
+  "name": "sciensaurus-scripts",
+  "type": "module",
+  "private": true,
+  "description": "Helper scripts for the Sciensaurus application"
+} 

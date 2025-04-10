@@ -22,7 +22,30 @@ import {
   Sector,
   LabelList
 } from 'recharts';
-import { Input } from "@/components/ui/input";
+import { useAuth } from "@/contexts/auth-context";
+import ArticleSummaryContent from "@/components/article-summary-content";
+
+// --- Ensure ArticleSummary interface is defined --- 
+interface ArticleSummary {
+  id?: string;
+  url: string;
+  title: string;
+  summarized_title?: string;
+  source?: string;
+  publish_date?: string;
+  summary?: string;
+  visual_summary?: Array<{emoji: string; point: string}>;
+  visualSummary?: Array<{emoji: string; point: string}>; // Alias often used
+  keywords?: string[];
+  study_metadata?: any; // Represents the parsed cohort analysis
+  related_research?: any; // Represents related research data
+  created_at?: string;
+  updated_at?: string;
+  is_bookmarked?: boolean;
+  view_count?: number;
+  originalArticleTitle?: string;
+  originalTitle?: string;
+}
 
 // Loading Overlay Component
 const LoadingOverlay = ({ 
@@ -43,15 +66,15 @@ const LoadingOverlay = ({
     "generatingSummary",
     "extractingKeywords",
     "searchingSimilarArticles",
-    "assessingResearch"
+    "complete"
   ];
 
   const stepLabels: Record<string, string> = {
     retrievingContent: "Retrieving article content...",
     generatingSummary: "Generating summary...",
     extractingKeywords: "Extracting relevant keywords...",
-    searchingSimilarArticles: "Searching for similar articles...",
-    assessingResearch: "Assessing supporting and contradictory research..."
+    searchingSimilarArticles: "Finding and classifying related research...",
+    complete: "Analysis complete!"
   };
 
   return (
@@ -101,16 +124,17 @@ const LoadingOverlay = ({
 export default function ArticleSummaryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  
+  const { user } = useAuth();
+
   const [url, setUrl] = useState<string>('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<ArticleSummary | null>(null);
   const [streamedText, setStreamedText] = useState<string>('');
   const [parseError, setParseError] = useState<string | null>(null);
   const [articleTitle, setArticleTitle] = useState<string>('');
   const [articleSource, setArticleSource] = useState<string>('');
-  const [publishDate, setPublishDate] = useState("");
+  const [publishDate, setPublishDate] = useState<string>("");
   const [activeGenderIndex, setActiveGenderIndex] = useState<number | undefined>(undefined);
   
   // Loading overlay state
@@ -118,17 +142,24 @@ export default function ArticleSummaryPage() {
   const [currentStep, setCurrentStep] = useState<string>("retrievingContent");
   const [completedSteps, setCompletedSteps] = useState<string[]>([]);
   const [extractedKeywords, setExtractedKeywords] = useState<string[]>([]);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [loadingRelatedResearch, setLoadingRelatedResearch] = useState(false);
+  const [relatedResearchData, setRelatedResearchData] = useState<any>(null); 
+  const [relatedResearchError, setRelatedResearchError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   
   // Add state for storing related research results
   const [relatedResearch, setRelatedResearch] = useState<{
     supporting: any[];
     contradictory: any[];
+    neutral: any[];
     totalFound: number;
     searchKeywords: string[];
     error?: string;
   }>({
     supporting: [],
     contradictory: [],
+    neutral: [],
     totalFound: 0,
     searchKeywords: []
   });
@@ -145,7 +176,7 @@ export default function ArticleSummaryPage() {
       });
       
       // Move to the next step
-      const steps = ["retrievingContent", "generatingSummary", "extractingKeywords", "searchingSimilarArticles", "assessingResearch"];
+      const steps = ["retrievingContent", "generatingSummary", "extractingKeywords", "searchingSimilarArticles", "complete"];
       const currentIndex = steps.indexOf(step);
       if (currentIndex < steps.length - 1) {
         setCurrentStep(steps[currentIndex + 1]);
@@ -218,13 +249,14 @@ export default function ArticleSummaryPage() {
                 setRelatedResearch({
                   supporting: data.articleSummary.related_research.supporting || [],
                   contradictory: data.articleSummary.related_research.contradictory || [],
+                  neutral: data.articleSummary.related_research.neutral || [],
                   totalFound: data.articleSummary.related_research.totalFound || 0,
                   searchKeywords: data.articleSummary.related_research.searchKeywords || []
                 });
               }
               
               // Set loading to false
-              setIsLoading(false);
+              setLoading(false);
             } else {
               throw new Error('Article not found in database');
             }
@@ -233,7 +265,7 @@ export default function ArticleSummaryPage() {
             console.log("Article not found in database, continuing with normal processing:", error.message);
             
             // Continue with normal processing - show loading overlay
-            if (!isLoading) {
+            if (!loading) {
               console.log("No cached data available, fetching with overlay");
               fetchSummaryWithOverlay(articleUrl);
             }
@@ -309,7 +341,7 @@ export default function ArticleSummaryPage() {
             }
             
             sessionStorage.removeItem('articleResult');
-            setIsLoading(false);
+            setLoading(false);
             foundCachedData = true;
           } catch (e) {
             console.error('Error parsing cached result:', e);
@@ -324,11 +356,11 @@ export default function ArticleSummaryPage() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, url, result, streamedText, isLoading]);
+  }, [searchParams, url, result, streamedText, loading]);
 
   // Fetch the summary without showing a loading overlay (for preprocessed articles)
   const fetchSummaryQuietly = async (articleUrl: string) => {
-    setIsLoading(true);
+    setLoading(true);
     
     try {
       // Extract domain name for source
@@ -398,7 +430,7 @@ export default function ArticleSummaryPage() {
         }
         
         setResult(data);
-        setArticleTitle(data.title || articleTitle);
+        setArticleTitle(data.title || data.originalTitle || '');
         
         // If we have keywords, fetch related research silently
         if (data.keywords && data.keywords.length > 0) {
@@ -478,12 +510,20 @@ export default function ArticleSummaryPage() {
       const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
       setError(errorMessage);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
   // Fetch related research without showing loading steps (for preprocessed articles)
   const fetchRelatedResearchQuietly = async (keywords: string[], maxRetries = 3) => {
+    console.log("[KEYWORD-DEBUG] Starting fetchRelatedResearchQuietly with keywords:", keywords);
+    
+    // Show that we're loading research
+    setRelatedResearch(prev => ({
+      ...prev,
+      searchKeywords: keywords
+    }));
+    
     let retryCount = 0;
     let lastError: string | null = null;
     const backoffDelay = (attempt: number) => Math.min(1000 * Math.pow(2, attempt), 8000); // Exponential backoff
@@ -493,7 +533,7 @@ export default function ArticleSummaryPage() {
         // If this is a retry, wait before trying again
         if (retryCount > 0) {
           const delay = backoffDelay(retryCount - 1);
-          console.log(`Retry attempt ${retryCount}/${maxRetries} after ${delay}ms`);
+          console.log(`[KEYWORD-DEBUG] Retry attempt ${retryCount}/${maxRetries} after ${delay}ms`);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
         
@@ -504,35 +544,90 @@ export default function ArticleSummaryPage() {
             error: `Reconnecting... (Attempt ${retryCount}/${maxRetries})`,
           }));
         }
+
+        // Extract key findings from the visual summary points
+        const keyFindings = result?.visualSummary
+          ? result.visualSummary.map((item: { emoji: string; point: string }) => item.point)
+          : [];
         
-        const response = await fetch('/api/semantic-scholar-search', {
+        console.log("[KEYWORD-DEBUG] Extracted key findings:", keyFindings);
+        console.log("[KEYWORD-DEBUG] Using mainArticleTitle:", articleTitle || result?.title || result?.originalTitle || 'Unknown');
+        
+        // Check if we're using default test keywords
+        const isUsingDefaultKeywords = !keywords || keywords.length === 0 || 
+          (keywords.length === 4 && 
+           keywords[0] === 'lateral epicondylitis' && 
+           keywords[1] === 'tennis elbow' && 
+           keywords[2] === 'ESWT' && 
+           keywords[3] === 'steroid injection');
+        
+        // Only use test mode if we're using the default test keywords
+        const shouldUseTestMode = isUsingDefaultKeywords;
+        
+        // Create request payload
+        const payload = {
+          keywords,
+          mainArticleTitle: articleTitle || result?.title || result?.originalTitle || '',
+          mainArticleFindings: keyFindings,
+          testMode: shouldUseTestMode // Only use test mode for default keywords
+        };
+        
+        console.log("[KEYWORD-DEBUG] Sending request to /api/semantic-scholar-paper-relevance with payload:", JSON.stringify(payload));
+        
+        // Call our new Paper Relevance API endpoint
+        const response = await fetch('/api/semantic-scholar-paper-relevance', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            keywords,
-            url,
-            articleTitle
-          }),
+          body: JSON.stringify(payload),
         });
 
+        console.log("[KEYWORD-DEBUG] API response status:", response.status);
         if (!response.ok) {
           const errorText = await response.text();
+          console.error("[KEYWORD-DEBUG] Error response body:", errorText);
           throw new Error(`Failed to fetch related research: ${response.statusText || errorText}`);
         }
 
         const data = await response.json();
+        console.log("[KEYWORD-DEBUG] API response data summary:", {
+          supporting: data.supporting?.length || 0,
+          contradictory: data.contradictory?.length || 0,
+          neutral: data.neutral?.length || 0,
+          totalFound: data.totalFound || 0,
+          searchKeywords: data.searchKeywords || []
+        });
+        
+        // Check if the returned keywords match what we sent
+        const keywordsMatch = JSON.stringify(data.searchKeywords) === JSON.stringify(keywords);
+        console.log("[KEYWORD-DEBUG] Keywords match between request and response:", keywordsMatch);
         
         if (data.error) {
+          console.error("[KEYWORD-DEBUG] API returned error:", data.error);
           throw new Error(data.error);
         }
 
+        // Check if we actually have any data
+        if (!data.supporting && !data.contradictory && !data.neutral) {
+          console.error("[KEYWORD-DEBUG] Invalid response data format - missing expected arrays");
+          throw new Error("Invalid response data from research API");
+        }
+
+        // Update the state with the response data
         setRelatedResearch({
           supporting: data.supporting || [],
           contradictory: data.contradictory || [],
+          neutral: data.neutral || [],
           totalFound: data.totalFound || 0,
           searchKeywords: keywords,
+        });
+        
+        console.log("[KEYWORD-DEBUG] Related research updated in state:", {
+          supporting: data.supporting?.length || 0,
+          contradictory: data.contradictory?.length || 0,
+          neutral: data.neutral?.length || 0,
+          totalFound: data.totalFound || 0
         });
         
         // If we get here, the request was successful, so break out of the retry loop
@@ -543,26 +638,132 @@ export default function ArticleSummaryPage() {
         lastError = err.message;
         retryCount++;
         
-        // If this was the last retry attempt, save the error state
+        // If this was the last retry attempt, display the error instead of mock data
         if (retryCount > maxRetries) {
-          setRelatedResearch(prev => ({
-            ...prev,
-            error: lastError || 'Failed to fetch related research after multiple attempts',
+          console.log("All API attempts failed, showing error to user");
+          
+          setRelatedResearch({
+            supporting: [],
+            contradictory: [],
+            neutral: [],
+            totalFound: 0,
             searchKeywords: keywords,
-          }));
+            error: `Failed to retrieve related research: ${lastError}`
+          });
         }
       }
+    }
+  };
+
+  // Fetch related research with loading overlay (used from the main loading process)
+  const fetchRelatedResearch = async (keywords: string[]) => {
+    try {
+      // Now searching for similar articles
+      updateLoadingStep("searchingSimilarArticles");
+      
+      console.log("[DEBUG] fetchRelatedResearch called with keywords:", keywords);
+      
+      if (!keywords || keywords.length === 0) {
+        console.error("[DEBUG] No keywords provided to fetchRelatedResearch");
+        updateLoadingStep("searchingSimilarArticles", true); // Mark as complete even though it failed
+        return;
+      }
+      
+      // Extract key findings from visual summary if available
+      const keyFindings = result?.visualSummary
+        ? result.visualSummary.map((item: { emoji: string; point: string }) => item.point)
+        : [];
+      
+      console.log("[DEBUG] Extracted key findings for research:", keyFindings);
+      console.log("[DEBUG] Using mainArticleTitle:", articleTitle || result?.title || result?.originalTitle || '');
+      
+      // Check if we're in test mode (via URL params)
+      const searchParams = new URLSearchParams(window.location.search);
+      const urlTestMode = searchParams.get('testMode') === 'true';
+      
+      // Check if we're using default test keywords
+      const isUsingDefaultKeywords = !keywords || keywords.length === 0 || 
+        (keywords.length === 4 && 
+         keywords[0] === 'lateral epicondylitis' && 
+         keywords[1] === 'tennis elbow' && 
+         keywords[2] === 'ESWT' && 
+         keywords[3] === 'steroid injection');
+      
+      // Use test mode if specified in URL or if using default test keywords
+      const shouldUseTestMode = urlTestMode || isUsingDefaultKeywords;
+      
+      // Call our semantic scholar paper relevance API
+      console.log("[DEBUG] Sending request to semantic-scholar-paper-relevance API with:", {
+        testMode: shouldUseTestMode,
+        keywords: keywords,
+        mainArticleTitle: articleTitle || result?.title || result?.originalTitle || '',
+        keyFindingsCount: keyFindings.length
+      });
+      
+      const response = await fetch('/api/semantic-scholar-paper-relevance', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          testMode: shouldUseTestMode,
+          keywords,
+          mainArticleTitle: articleTitle || result?.title || result?.originalTitle || '',
+          mainArticleFindings: keyFindings,
+        }),
+      });
+      
+      if (!response.ok) {
+        console.error("[DEBUG] API response not OK:", response.status, response.statusText);
+        throw new Error(`Failed to fetch related research: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      console.log("[DEBUG] Received API response with:", {
+        supportingCount: data.supporting?.length || 0,
+        contradictoryCount: data.contradictory?.length || 0,
+        neutralCount: data.neutral?.length || 0,
+        totalFound: data.totalFound || 0
+      });
+      
+      if (data.error) {
+        console.error("[DEBUG] API returned error:", data.error);
+        throw new Error(data.error);
+      }
+      
+      setRelatedResearch({
+        supporting: data.supporting || [],
+        contradictory: data.contradictory || [],
+        neutral: data.neutral || [],
+        totalFound: data.totalFound || 0,
+        searchKeywords: keywords
+      });
+      
+      // Mark the step as complete
+      updateLoadingStep("searchingSimilarArticles", true);
+      
+    } catch (error) {
+      console.error('[DEBUG] Error in fetchRelatedResearch:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      setRelatedResearch(prev => ({
+        ...prev,
+        error: `Failed to retrieve related research: ${errorMessage}`
+      }));
+      
+      // Still mark step as complete, just with an error
+      updateLoadingStep("searchingSimilarArticles", true);
     }
   };
 
   // Original fetchSummary method with loading overlay (renamed for clarity)
   const fetchSummaryWithOverlay = async (articleUrl: string) => {
     // Prevent multiple loading states or reprocessing the same URL
-    if (isLoading || showLoadingOverlay) {
+    if (loading || showLoadingOverlay) {
       return;
     }
     
-    setIsLoading(true);
+    setLoading(true);
     setResult(null);
     setStreamedText('');
     setError(null);
@@ -575,6 +776,7 @@ export default function ArticleSummaryPage() {
     setRelatedResearch({
       supporting: [],
       contradictory: [],
+      neutral: [],
       totalFound: 0,
       searchKeywords: []
     });
@@ -683,11 +885,11 @@ export default function ArticleSummaryPage() {
             // No keywords found, mark remaining steps as complete
             updateLoadingStep("extractingKeywords", true);
             updateLoadingStep("searchingSimilarArticles", true);
-            updateLoadingStep("assessingResearch", true);
+            updateLoadingStep("complete", true);
             
             // Finish loading
             setTimeout(() => {
-              setIsLoading(false);
+              setLoading(false);
               setShowLoadingOverlay(false);
             }, 500);
           }
@@ -760,11 +962,11 @@ export default function ArticleSummaryPage() {
                   // No keywords found, mark remaining steps as complete
                   updateLoadingStep("extractingKeywords", true);
                   updateLoadingStep("searchingSimilarArticles", true);
-                  updateLoadingStep("assessingResearch", true);
+                  updateLoadingStep("complete", true);
                   
                   // Finish loading
                   setTimeout(() => {
-                    setIsLoading(false);
+                    setLoading(false);
                     setShowLoadingOverlay(false);
                   }, 500);
                 }
@@ -772,11 +974,11 @@ export default function ArticleSummaryPage() {
                 // No keywords found, mark remaining steps as complete
                 updateLoadingStep("extractingKeywords", true);
                 updateLoadingStep("searchingSimilarArticles", true);
-                updateLoadingStep("assessingResearch", true);
+                updateLoadingStep("complete", true);
                 
                 // Finish loading
                 setTimeout(() => {
-                  setIsLoading(false);
+                  setLoading(false);
                   setShowLoadingOverlay(false);
                 }, 500);
               }
@@ -784,11 +986,11 @@ export default function ArticleSummaryPage() {
               // Failed to extract keywords, mark remaining steps as complete
               updateLoadingStep("extractingKeywords", true);
               updateLoadingStep("searchingSimilarArticles", true);
-              updateLoadingStep("assessingResearch", true);
+              updateLoadingStep("complete", true);
               
               // Finish loading
               setTimeout(() => {
-                setIsLoading(false);
+                setLoading(false);
                 setShowLoadingOverlay(false);
               }, 500);
             }
@@ -820,11 +1022,11 @@ export default function ArticleSummaryPage() {
               // No keywords found, mark remaining steps as complete
               updateLoadingStep("extractingKeywords", true);
               updateLoadingStep("searchingSimilarArticles", true);
-              updateLoadingStep("assessingResearch", true);
+              updateLoadingStep("complete", true);
               
               // Finish loading
               setTimeout(() => {
-                setIsLoading(false);
+                setLoading(false);
                 setShowLoadingOverlay(false);
               }, 500);
             }
@@ -851,11 +1053,11 @@ export default function ArticleSummaryPage() {
                   updateLoadingStep("generatingSummary", true);
                   updateLoadingStep("extractingKeywords", true);
                   updateLoadingStep("searchingSimilarArticles", true);
-                  updateLoadingStep("assessingResearch", true);
+                  updateLoadingStep("complete", true);
                   
                   // Finish loading
                   setTimeout(() => {
-                    setIsLoading(false);
+                    setLoading(false);
                     setShowLoadingOverlay(false);
                   }, 500);
                 }
@@ -864,11 +1066,11 @@ export default function ArticleSummaryPage() {
                 updateLoadingStep("generatingSummary", true);
                 updateLoadingStep("extractingKeywords", true);
                 updateLoadingStep("searchingSimilarArticles", true);
-                updateLoadingStep("assessingResearch", true);
+                updateLoadingStep("complete", true);
                 
                 // Finish loading
                 setTimeout(() => {
-                  setIsLoading(false);
+                  setLoading(false);
                   setShowLoadingOverlay(false);
                 }, 500);
               }
@@ -879,11 +1081,11 @@ export default function ArticleSummaryPage() {
               updateLoadingStep("generatingSummary", true);
               updateLoadingStep("extractingKeywords", true);
               updateLoadingStep("searchingSimilarArticles", true);
-              updateLoadingStep("assessingResearch", true);
+              updateLoadingStep("complete", true);
               
               // Finish loading
               setTimeout(() => {
-                setIsLoading(false);
+                setLoading(false);
                 setShowLoadingOverlay(false);
               }, 500);
             }
@@ -899,10 +1101,10 @@ export default function ArticleSummaryPage() {
         updateLoadingStep("generatingSummary", true);
         updateLoadingStep("extractingKeywords", true);
         updateLoadingStep("searchingSimilarArticles", true);
-        updateLoadingStep("assessingResearch", true);
+        updateLoadingStep("complete", true);
         
         setTimeout(() => {
-          setIsLoading(false);
+          setLoading(false);
           setShowLoadingOverlay(false);
         }, 1000);
       }
@@ -913,84 +1115,16 @@ export default function ArticleSummaryPage() {
       
       // Mark all steps as complete and finish loading
       setTimeout(() => {
-        setIsLoading(false);
+        setLoading(false);
         setShowLoadingOverlay(false);
       }, 1000);
     }
   };
 
-  // Add a function to fetch related research
-  const fetchRelatedResearch = useCallback(async (keywords: string[]) => {
-    try {
-      // Update the loading step to searching for similar articles
-      updateLoadingStep("searchingSimilarArticles");
-      
-      // Update search keywords in the state
-      setRelatedResearch(prev => ({
-        ...prev,
-        searchKeywords: keywords
-      }));
-      
-      // Call the API to fetch related research
-      const response = await fetch('/api/semantic-scholar-search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          keywords,
-          url,
-          articleTitle
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch related research: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      // Store the research results
-      setRelatedResearch({
-        supporting: data.supporting || [],
-        contradictory: data.contradictory || [],
-        totalFound: data.totalFound || 0,
-        searchKeywords: keywords,
-      });
-      
-      // Mark research assessment as complete
-      updateLoadingStep("searchingSimilarArticles", true);
-      updateLoadingStep("assessingResearch", true);
-      
-      // Finish loading after everything is complete
-      setTimeout(() => {
-        setIsLoading(false);
-      }, 500);
-
-      } catch (error) {
-      const err = error as Error;
-      console.error('Error fetching related research:', err);
-      setRelatedResearch(prev => ({
-        ...prev,
-        error: err.message,
-        searchKeywords: keywords,
-      }));
-      
-      // Mark as error but still complete the step
-      updateLoadingStep("searchingSimilarArticles", true);
-      updateLoadingStep("assessingResearch", true);
-      setIsLoading(false);
-    }
-  }, [url, articleTitle, updateLoadingStep]);
-
   // Function to parse the plain text response
-  const parseTextResponse = (text: string) => {
+  const parseTextResponse = (text: string): ArticleSummary | null => { 
     try {
-      // Define the types for the cohort analysis data structure
+      // Type definitions for TypeScript
       type GenderDistribution = {
         male: number;
         female: number;
@@ -1030,7 +1164,8 @@ export default function ArticleSummaryPage() {
         cohortAnalysis: CohortAnalysis;
       }
       
-      const result: ResultData = {
+      // Internal structure for parsing
+      const parsedDataInternal = {
         title: "",
         originalTitle: "",
         visualSummary: [] as { emoji: string; point: string }[],
@@ -1050,24 +1185,24 @@ export default function ArticleSummaryPage() {
             demographics: [] as GeographicRegion[]
           },
           notes: [] as string[]
-        }
+        } as CohortAnalysis
       };
       
       // Parse original title if it exists
       const originalTitleSection = text.match(/### Original Article Title:\s*([\s\S]*?)(?=###|$)/);
       if (originalTitleSection && originalTitleSection[1]) {
-        result.originalTitle = originalTitleSection[1].trim();
+        parsedDataInternal.originalTitle = originalTitleSection[1].trim();
         
         // If an original title was found, immediately set it as the article title
-        if (result.originalTitle && result.originalTitle.length > 5) {
-          setArticleTitle(result.originalTitle);
+        if (parsedDataInternal.originalTitle && parsedDataInternal.originalTitle.length > 5) {
+          parsedDataInternal.title = parsedDataInternal.originalTitle;
         }
       }
       
       // Parse title
       const titleSection = text.match(/### Summarized Title:\s*([\s\S]*?)(?=###|$)/);
       if (titleSection && titleSection[1]) {
-        result.title = titleSection[1].trim();
+        parsedDataInternal.title = titleSection[1].trim();
       }
       
       // Parse visual summary
@@ -1126,7 +1261,7 @@ export default function ArticleSummaryPage() {
               const uniqueEmoji = getUniqueEmoji(emoji);
               
               // Add the item to the visual summary
-              result.visualSummary.push({
+              parsedDataInternal.visualSummary.push({
                 emoji: uniqueEmoji,
                 point: pointText
               });
@@ -1152,7 +1287,7 @@ export default function ArticleSummaryPage() {
               isLikelyEmoji ? emoji : scientificEmojis[Math.floor(Math.random() * scientificEmojis.length)]
             );
             
-            result.visualSummary.push({
+            parsedDataInternal.visualSummary.push({
               emoji: uniqueEmoji,
               point: pointText
             });
@@ -1165,7 +1300,7 @@ export default function ArticleSummaryPage() {
               // Find a unique emoji from our scientific set
               const uniqueEmoji = getUniqueEmoji("📌"); // Start with pin as default
               
-              result.visualSummary.push({
+              parsedDataInternal.visualSummary.push({
                 emoji: uniqueEmoji,
                 point: pointText
               });
@@ -1177,37 +1312,74 @@ export default function ArticleSummaryPage() {
       // Parse keywords
       const keywordsSection = text.match(/### Keywords:\s*([\s\S]*?)(?=###|$)/);
       
+      console.log("[KEYWORD-TEST] Starting keyword extraction");
+      console.log("[KEYWORD-TEST] Original text length:", text.length);
+      console.log("[KEYWORD-TEST] Text sample:", text.substring(0, 200) + "...");
+      console.log("[KEYWORD-TEST] Looking for '### Keywords:' section");
+      // Search for the keyword pattern manually to debug
+      const keywordIndex = text.indexOf("### Keywords:");
+      console.log("[KEYWORD-TEST] Keywords section found at index:", keywordIndex);
+      
+      if (keywordIndex > -1) {
+        // Extract the raw text after the keyword header
+        const keywordEndIndex = text.indexOf("###", keywordIndex + 13); // Look for the next section
+        const rawSectionText = keywordEndIndex > -1 
+          ? text.substring(keywordIndex, keywordEndIndex)
+          : text.substring(keywordIndex);
+        console.log("[KEYWORD-TEST] Raw keyword section:", rawSectionText);
+      }
+      
       if (keywordsSection && keywordsSection[1]) {
+        console.log("[KEYWORD-TEST] RegEx matched keyword section:", keywordsSection[0].substring(0, 100) + "...");
+        console.log("[KEYWORD-TEST] Extracted keyword content:", keywordsSection[1].substring(0, 100) + "...");
         const keywordsText = keywordsSection[1].trim();
         
         // If it's just the prompt instructions without actual keywords, skip it
         if (keywordsText.includes("GUIDELINES FOR GOOD KEYWORDS") || keywordsText.includes("[Generate 5-7")) {
-          result.keywords = []; // No valid keywords found
+          parsedDataInternal.keywords = []; // No valid keywords found
+          console.warn("[KEYWORD-TEST] Keywords section found but appears to be instruction text");
         } else {
           // Split by commas and clean up
-          const keywordsList = keywordsText
-            .split(/[,\n]/)
-            .map(k => k.replace(/^[-\s•⦁*✓✗]*/, '').trim())
-            .filter(k => {
-              // Filter out empty keywords and any text that's clearly not a keyword
-              return k !== '' && 
-                     k !== 'N/A' && 
-                     k !== 'Not applicable' && 
-                     k !== 'None' &&
-                     !k.includes('too generic') &&
-                     !k.includes('too vague') &&
-                     !k.includes('too broad') &&
-                     !k.toLowerCase().startsWith('avoid') &&
-                     !k.toLowerCase().startsWith('prefer') &&
-                     !k.toLowerCase().startsWith('include');
-            });
+          console.log("[KEYWORD-TEST] Original keywords text:", keywordsText);
+          
+          const splitKeywords = keywordsText.split(/[,\n]/);
+          console.log("[KEYWORD-TEST] Split keywords:", splitKeywords);
+          
+          const cleanedKeywords = splitKeywords.map(k => k.replace(/^[-\s•⦁*✓✗]*/, '').trim());
+          console.log("[KEYWORD-TEST] Cleaned keywords:", cleanedKeywords);
+          
+          const filteredKeywords = cleanedKeywords.filter(k => {
+            // Filter out empty keywords and any text that's clearly not a keyword
+            return k !== '' && 
+                   k !== 'N/A' && 
+                   k !== 'Not applicable' && 
+                   k !== 'None' &&
+                   !k.includes('too generic') &&
+                   !k.includes('too vague') &&
+                   !k.includes('too broad') &&
+                   !k.toLowerCase().startsWith('avoid') &&
+                   !k.toLowerCase().startsWith('prefer') &&
+                   !k.toLowerCase().startsWith('include');
+          });
+          console.log("[KEYWORD-TEST] Filtered keywords:", filteredKeywords);
           
           // Remove any keywords in quotes
-          result.keywords = keywordsList.map(k => k.replace(/["']/g, ''));
+          parsedDataInternal.keywords = filteredKeywords.map(k => k.replace(/["']/g, ''));
+          console.log("[KEYWORD-TEST] Final keywords after processing:", parsedDataInternal.keywords);
           
-          // Log the extracted keywords for debugging
-          console.log("Extracted keywords for research:", result.keywords);
+          // Immediately update extracted keywords in the component state
+          if (parsedDataInternal.keywords.length > 0) {
+            console.log("[KEYWORD-TEST] Setting extractedKeywords state with:", parsedDataInternal.keywords);
+            setExtractedKeywords(parsedDataInternal.keywords);
+            
+            // Start the process of fetching related research if we have keywords
+            updateLoadingStep("extractingKeywords", true);
+          } else {
+            console.warn("[KEYWORD-TEST] No valid keywords extracted after processing");
+          }
         }
+      } else {
+        console.warn("[KEYWORD-TEST] No keywords section found in OpenAI response");
       }
       
       // Parse cohort analysis
@@ -1222,7 +1394,7 @@ export default function ArticleSummaryPage() {
         if (studyTypeLine) {
           const studyType = studyTypeLine.replace('Type of study:', '').trim();
           if (studyType && studyType !== 'Not specified' && studyType !== 'N/A' && studyType !== 'Not applicable') {
-            result.cohortAnalysis.studyType = studyType;
+            parsedDataInternal.cohortAnalysis.studyType = studyType;
           }
         }
         
@@ -1238,7 +1410,7 @@ export default function ArticleSummaryPage() {
             .trim();
           
           if (duration && duration !== 'Not specified' && duration !== 'N/A' && duration !== 'Not applicable') {
-            result.cohortAnalysis.duration = duration;
+            parsedDataInternal.cohortAnalysis.duration = duration;
           }
         }
         
@@ -1256,7 +1428,7 @@ export default function ArticleSummaryPage() {
             .trim();
           
           if (dateRange && dateRange !== 'Not specified' && dateRange !== 'N/A' && dateRange !== 'Not applicable') {
-            result.cohortAnalysis.dateRange = dateRange;
+            parsedDataInternal.cohortAnalysis.dateRange = dateRange;
           }
         }
         
@@ -1276,7 +1448,7 @@ export default function ArticleSummaryPage() {
           if (sizeText && sizeText !== 'Not specified' && sizeText !== 'N/A' && sizeText !== 'Not applicable') {
             const numberMatch = sizeText.match(/\d+/);
             if (numberMatch) {
-              result.cohortAnalysis.cohortSize = parseInt(numberMatch[0], 10);
+              parsedDataInternal.cohortAnalysis.cohortSize = parseInt(numberMatch[0], 10);
             }
           }
         }
@@ -1329,13 +1501,13 @@ export default function ArticleSummaryPage() {
                   ageRange = `Under ${ageValue}`;
                   
                   // Add this specific age range
-                  result.cohortAnalysis.cohortStratification.ageRanges.push({
+                  parsedDataInternal.cohortAnalysis.cohortStratification.ageRanges.push({
                     range: ageRange,
                     percentage
                   });
                   
                   // Add the complementary age range
-                  result.cohortAnalysis.cohortStratification.ageRanges.push({
+                  parsedDataInternal.cohortAnalysis.cohortStratification.ageRanges.push({
                     range: `${ageValue}+`,
                     percentage: 100 - percentage
                   });
@@ -1343,23 +1515,23 @@ export default function ArticleSummaryPage() {
                   ageRange = `${ageValue}+`;
                   
                   // Add this specific age range
-                  result.cohortAnalysis.cohortStratification.ageRanges.push({
+                  parsedDataInternal.cohortAnalysis.cohortStratification.ageRanges.push({
                     range: ageRange,
                     percentage
                   });
                   
                   // Add the complementary age range
-                  result.cohortAnalysis.cohortStratification.ageRanges.push({
+                  parsedDataInternal.cohortAnalysis.cohortStratification.ageRanges.push({
                     range: `Under ${ageValue}`,
                     percentage: 100 - percentage
                   });
                 }
                 
                 // Store the original text description as a note
-                if (!result.cohortAnalysis.notes) {
-                  result.cohortAnalysis.notes = [];
+                if (!parsedDataInternal.cohortAnalysis.notes) {
+                  parsedDataInternal.cohortAnalysis.notes = [];
                 }
-                result.cohortAnalysis.notes.push(line);
+                parsedDataInternal.cohortAnalysis.notes.push(line);
                 
                 i++;
                 continue;
@@ -1384,7 +1556,7 @@ export default function ArticleSummaryPage() {
               }
               
               if (!isNaN(percentage)) {
-                result.cohortAnalysis.cohortStratification.ageRanges.push({
+                parsedDataInternal.cohortAnalysis.cohortStratification.ageRanges.push({
                   range: ageRange,
                   percentage
                 });
@@ -1414,7 +1586,7 @@ export default function ArticleSummaryPage() {
                   const percentage = parseFloat(percentageStr);
                   
                   if (!isNaN(percentage)) {
-                    result.cohortAnalysis.cohortStratification.ageRanges.push({
+                    parsedDataInternal.cohortAnalysis.cohortStratification.ageRanges.push({
                       range: ageRange,
                       percentage
                     });
@@ -1431,10 +1603,10 @@ export default function ArticleSummaryPage() {
           
           // If we didn't find any structured age data but did find age text notes,
           // add them to the notes section
-          if (result.cohortAnalysis.cohortStratification.ageRanges.length === 0 && ageNotes.length > 0) {
+          if (parsedDataInternal.cohortAnalysis.cohortStratification.ageRanges.length === 0 && ageNotes.length > 0) {
             for (const note of ageNotes) {
-              if (!result.cohortAnalysis.notes.includes(note)) {
-                result.cohortAnalysis.notes.push(note);
+              if (!parsedDataInternal.cohortAnalysis.notes.includes(note)) {
+                parsedDataInternal.cohortAnalysis.notes.push(note);
               }
             }
           }
@@ -1454,11 +1626,11 @@ export default function ArticleSummaryPage() {
           if (maleFemaleMatch) {
             // Check if Female comes first in the match
             if (maleFemaleMatch[0].toLowerCase().indexOf('female') < maleFemaleMatch[0].toLowerCase().indexOf('male')) {
-              result.cohortAnalysis.cohortStratification.gender.female = parseFloat(maleFemaleMatch[1]);
-              result.cohortAnalysis.cohortStratification.gender.male = parseFloat(maleFemaleMatch[2]);
+              parsedDataInternal.cohortAnalysis.cohortStratification.gender.female = parseFloat(maleFemaleMatch[1]);
+              parsedDataInternal.cohortAnalysis.cohortStratification.gender.male = parseFloat(maleFemaleMatch[2]);
             } else {
-              result.cohortAnalysis.cohortStratification.gender.male = parseFloat(maleFemaleMatch[1]);
-              result.cohortAnalysis.cohortStratification.gender.female = parseFloat(maleFemaleMatch[2]);
+              parsedDataInternal.cohortAnalysis.cohortStratification.gender.male = parseFloat(maleFemaleMatch[1]);
+              parsedDataInternal.cohortAnalysis.cohortStratification.gender.female = parseFloat(maleFemaleMatch[2]);
             }
           } else {
             // Check lines following the gender line
@@ -1469,7 +1641,7 @@ export default function ArticleSummaryPage() {
               for (let i = genderIndex + 1; i < Math.min(genderIndex + 5, cohortLines.length); i++) {
                 const maleLine = cohortLines[i].match(/Male\s*:?\s*(\d+\.?\d*)%/i);
                 if (maleLine && maleLine[1]) {
-                  result.cohortAnalysis.cohortStratification.gender.male = parseFloat(maleLine[1]);
+                  parsedDataInternal.cohortAnalysis.cohortStratification.gender.male = parseFloat(maleLine[1]);
                   break;
                 }
               }
@@ -1478,7 +1650,7 @@ export default function ArticleSummaryPage() {
               for (let i = genderIndex + 1; i < Math.min(genderIndex + 5, cohortLines.length); i++) {
                 const femaleLine = cohortLines[i].match(/Female\s*:?\s*(\d+\.?\d*)%/i);
                 if (femaleLine && femaleLine[1]) {
-                  result.cohortAnalysis.cohortStratification.gender.female = parseFloat(femaleLine[1]);
+                  parsedDataInternal.cohortAnalysis.cohortStratification.gender.female = parseFloat(femaleLine[1]);
                   break;
                 }
               }
@@ -1487,7 +1659,7 @@ export default function ArticleSummaryPage() {
               for (let i = genderIndex + 1; i < Math.min(genderIndex + 5, cohortLines.length); i++) {
                 const otherLine = cohortLines[i].match(/Other\s*:?\s*(\d+\.?\d*)%/i);
                 if (otherLine && otherLine[1]) {
-                  result.cohortAnalysis.cohortStratification.gender.other = parseFloat(otherLine[1]);
+                  parsedDataInternal.cohortAnalysis.cohortStratification.gender.other = parseFloat(otherLine[1]);
                   break;
                 }
               }
@@ -1524,7 +1696,7 @@ export default function ArticleSummaryPage() {
               let percentage = parseFloat(geoMatch[2]);
               
               if (!isNaN(percentage)) {
-                result.cohortAnalysis.cohortStratification.demographics.push({
+                parsedDataInternal.cohortAnalysis.cohortStratification.demographics.push({
                   region,
                   percentage
                 });
@@ -1545,17 +1717,35 @@ export default function ArticleSummaryPage() {
             .map(line => line.replace(/^[-\s•]*/, '').trim())
             .filter(note => note !== '' && note !== 'Not specified' && note !== 'N/A' && note !== 'Not applicable');
           
-          result.cohortAnalysis.notes = notesLines;
+          parsedDataInternal.cohortAnalysis.notes = notesLines;
         }
       }
       
       // Add this at the end of the successful parsing section
       // Fetch related research using the keywords
-      if (result.keywords && result.keywords.length > 0) {
-        fetchRelatedResearch(result.keywords);
+      if (parsedDataInternal.keywords && parsedDataInternal.keywords.length > 0) {
+        fetchRelatedResearch(parsedDataInternal.keywords);
       }
       
-      return result;
+      // --- Construct the final ArticleSummary object --- 
+      const finalResult: ArticleSummary = {
+        url: url, // Get url from component state
+        title: parsedDataInternal.title,
+        originalTitle: parsedDataInternal.originalTitle,
+        summarized_title: parsedDataInternal.title, 
+        source: articleSource, // Get source from component state
+        publish_date: publishDate, // Get publishDate from component state
+        summary: parsedDataInternal.visualSummary.map(item => item.point).join('\n'),
+        visual_summary: parsedDataInternal.visualSummary,
+        visualSummary: parsedDataInternal.visualSummary, // Alias
+        keywords: parsedDataInternal.keywords,
+        study_metadata: parsedDataInternal.cohortAnalysis, // Map to study_metadata
+        related_research: null, // Fetched separately
+      };
+      
+      // --- Return the correctly typed finalResult --- 
+      return finalResult; 
+
     } catch (error) {
       console.error("Error parsing text response:", error);
       return null;
@@ -1733,9 +1923,10 @@ export default function ArticleSummaryPage() {
 
   // Render the cohort analysis section
   const renderCohortAnalysis = () => {
-    if (!result?.cohortAnalysis) {
+    if (!result?.study_metadata) { // Use study_metadata
       return <div className="text-gray-500 italic">No cohort analysis available</div>;
     }
+    const { /* ... */ } = result.study_metadata; // Use study_metadata
 
     // Only use actual values from the API response, no defaults
     const {
@@ -1745,7 +1936,7 @@ export default function ArticleSummaryPage() {
       cohortSize,
       cohortStratification,
       notes
-    } = result.cohortAnalysis;
+    } = result.study_metadata;
 
     // Colors for charts
     const CHART_COLORS = [
@@ -2150,9 +2341,122 @@ export default function ArticleSummaryPage() {
     );
   };
 
-  // Add a new function to render related research
+  // Add a new function to manually trigger related research fetch
+  const manuallyFetchRelatedResearch = () => {
+    console.log("[DEBUG] Manually triggering related research fetch");
+    
+    let keywordsToUse = extractedKeywords;
+    
+    // If we don't have any keywords but have a result, try to extract them
+    if ((!keywordsToUse || keywordsToUse.length === 0) && result && result.keywords && result.keywords.length > 0) {
+      console.log("[DEBUG] Using keywords from result:", result.keywords);
+      keywordsToUse = result.keywords;
+      setExtractedKeywords(result.keywords);
+    }
+    
+    // If we still don't have keywords, try to extract them from the visual summary or title
+    if ((!keywordsToUse || keywordsToUse.length === 0) && result) {
+      // Try to extract keywords from the title and visual summary
+      const potentialKeywords = new Set<string>();
+      
+      // Extract keywords from title
+      if (result.title) {
+        const titleWords = result.title
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((word: string) => word.length > 3 && !['with', 'from', 'this', 'that', 'there', 'these', 'those', 'study', 'research'].includes(word));
+        
+        titleWords.forEach((word: string) => potentialKeywords.add(word));
+      }
+      
+      // Extract keywords from visual summary points
+      if (result.visualSummary && result.visualSummary.length > 0) {
+        result.visualSummary.forEach((item: { emoji: string; point: string }) => {
+          const pointWords = item.point
+            .toLowerCase()
+            .split(/\s+/)
+            .filter((word: string) => word.length > 3 && !['with', 'from', 'this', 'that', 'there', 'these', 'those', 'study', 'research'].includes(word));
+          
+          pointWords.forEach((word: string) => potentialKeywords.add(word));
+        });
+      }
+      
+      // Use the first 5 potential keywords
+      const extractedWords = Array.from(potentialKeywords).slice(0, 5);
+      
+      if (extractedWords.length > 0) {
+        console.log("[DEBUG] Manually extracted keywords:", extractedWords);
+        keywordsToUse = extractedWords;
+        setExtractedKeywords(extractedWords);
+      }
+    }
+    
+    // If we have keywords now, fetch related research
+    if (keywordsToUse && keywordsToUse.length > 0) {
+      console.log("[DEBUG] Fetching related research with manually processed keywords:", keywordsToUse);
+      fetchRelatedResearchQuietly(keywordsToUse);
+    } else {
+      console.error("[DEBUG] Could not find or extract any keywords for research");
+      setRelatedResearch(prev => ({
+        ...prev,
+        error: "Could not extract keywords from the article. Please try again."
+      }));
+    }
+  };
+
+  // Add the manual trigger button in the renderRelatedResearch function
   const renderRelatedResearch = () => {
-    const { supporting, contradictory, error: researchError, searchKeywords } = relatedResearch;
+    const { supporting, contradictory, neutral, error: researchError, searchKeywords } = relatedResearch;
+    
+    console.log("[DEBUG] Rendering related research with data:", { 
+      supportingCount: supporting.length,
+      contradictoryCount: contradictory.length, 
+      neutralCount: neutral.length,
+      hasError: !!researchError, 
+      keywords: searchKeywords
+    });
+    
+    // Debugging function to log the state
+    const debugRelatedResearch = () => {
+      console.log('Current relatedResearch state:', relatedResearch);
+      
+      // Show the structure of sample articles
+      if (relatedResearch.supporting && relatedResearch.supporting.length > 0) {
+        console.log('Sample supporting article structure:', {
+          article: relatedResearch.supporting[0],
+          keys: Object.keys(relatedResearch.supporting[0]),
+          hasClassificationReason: 'classificationReason' in relatedResearch.supporting[0],
+          hasConclusion: 'conclusion' in relatedResearch.supporting[0],
+          hasAbstract: 'abstract' in relatedResearch.supporting[0]
+        });
+      }
+      
+      if (relatedResearch.contradictory && relatedResearch.contradictory.length > 0) {
+        console.log('Sample contradictory article structure:', {
+          article: relatedResearch.contradictory[0],
+          keys: Object.keys(relatedResearch.contradictory[0])
+        });
+      }
+      
+      if (relatedResearch.neutral && relatedResearch.neutral.length > 0) {
+        console.log('Sample neutral article structure:', {
+          article: relatedResearch.neutral[0],
+          keys: Object.keys(relatedResearch.neutral[0])
+        });
+      }
+      
+      console.log('Current extractedKeywords:', extractedKeywords);
+      console.log('Current result object:', result);
+      console.log('Current loading state:', {
+        loading,
+        showLoadingOverlay,
+        currentStep,
+        completedSteps
+      });
+      
+      // Try to manually trigger the fetch
+      manuallyFetchRelatedResearch();
+    };
     
     // Check if the error contains common connection errors and make them user-friendly
     const getFormattedErrorMessage = (error: string) => {
@@ -2166,119 +2470,189 @@ export default function ArticleSummaryPage() {
       return error;
     };
     
-    // Handle errors with a retry button
-    if (researchError) {
+    // If we have no data at all, show a prominent button to trigger data fetch
+    if (supporting.length === 0 && contradictory.length === 0 && neutral.length === 0) {
       return (
-        <div className="p-6 bg-red-50 border border-red-100 rounded-md">
-          <div className="flex flex-col items-center text-center">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-red-500 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <p className="text-red-600 mb-4">{getFormattedErrorMessage(researchError)}</p>
+        <div className="p-6 text-center">
+          <p className="text-gray-600 mb-4">
+            {researchError ? 
+              `Error: ${getFormattedErrorMessage(researchError)}` : 
+              "No related research data available yet."
+            }
+          </p>
+          
+          <div className="mx-auto max-w-md">
             <Button 
-              variant="outline"
-              className="bg-white hover:bg-gray-100 text-red-600 border-red-300"
-              onClick={() => {
-                // Retry fetching related research
-                if (extractedKeywords.length > 0) {
-                  fetchRelatedResearchQuietly(extractedKeywords);
-                }
-              }}
+              className="w-full py-3 text-white bg-blue-600 hover:bg-blue-700 mb-4 font-medium"
+              onClick={manuallyFetchRelatedResearch}
             >
-              Retry
+              <span className="flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                Find Related Research
+              </span>
             </Button>
-          </div>
-        </div>
-      );
-    }
-    
-    if (supporting.length === 0 && contradictory.length === 0) {
-      if (currentStep === "searchingSimilarArticles" && !completedSteps.includes("searchingSimilarArticles")) {
-        return (
-          <div className="p-6 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-900 mx-auto mb-2"></div>
-            <p className="text-gray-600">
-              {searchKeywords && searchKeywords.length > 0 
-                ? `Retrieving similar articles using the following keywords: ${searchKeywords.join(', ')}` 
-                : 'Searching for related research...'}
-            </p>
-          </div>
-        );
-      }
-      
-      return (
-        <div className="p-6 text-center bg-gray-50 border border-gray-100 rounded-md">
-          <p className="text-gray-600 mb-2">No related research articles found.</p>
-          {extractedKeywords.length > 0 && (
-            <Button 
-              variant="outline"
-              className="text-gray-600 border-gray-300 hover:bg-gray-100 text-sm"
-              onClick={() => fetchRelatedResearchQuietly(extractedKeywords)}
-            >
-              Try again
-            </Button>
-          )}
-        </div>
-      );
-    }
-    
-    return (
-      <div className="grid md:grid-cols-2 gap-8">
-        {/* Supporting Research */}
-        <div>
-          <h4 className="text-lg font-medium mb-4 flex items-center">
-            <span className="w-3 h-3 rounded-full bg-green-500 mr-2"></span>
-            Supporting Research
-          </h4>
-          <div className="space-y-4">
-            {supporting.length === 0 ? (
-              <p className="text-gray-500">No supporting research articles found.</p>
-            ) : (
-              supporting.map((article, index) => (
-                <div key={index} className="border-l-4 border-l-green-500 p-4 bg-white shadow-sm rounded-md">
-                  <h5 className="font-medium text-blue-900 mb-1">
-                    <a href={article.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                      {article.title}
-                    </a>
-                  </h5>
-                  {article.finding && (
-                    <p className="text-sm text-gray-700 my-2 bg-green-50 p-2 rounded border-l-2 border-l-green-400">
-                      <span className="text-green-600 font-medium">This study supports: </span>{article.finding}
-                    </p>
-                  )}
-                </div>
-              ))
+            
+            {extractedKeywords.length > 0 && (
+              <div className="mt-2 text-sm text-gray-500">
+                <p>Using keywords: {extractedKeywords.join(', ')}</p>
+              </div>
             )}
+            
+            <div className="mt-4">
+              <Button 
+                variant="outline"
+                className="text-blue-600 border-blue-300 hover:bg-blue-50 text-sm"
+                onClick={debugRelatedResearch}
+              >
+                Debug
+              </Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    
+    // If we have data, display it in the proper format
+    return (
+      <div>
+        <div className="mb-4 flex justify-between">
+          <div className="text-sm text-gray-500">
+            {searchKeywords && searchKeywords.length > 0 ? (
+              <p>Search keywords: {searchKeywords.join(', ')}</p>
+            ) : null}
+          </div>
+          
+          <div className="flex">
+            <Button 
+              variant="outline"
+              className="text-blue-600 border-blue-300 hover:bg-blue-50 text-sm mr-2"
+              onClick={debugRelatedResearch}
+            >
+              Debug
+            </Button>
+            <Button 
+              variant="outline"
+              className="text-green-600 border-green-300 hover:bg-green-50 text-sm"
+              onClick={manuallyFetchRelatedResearch}
+            >
+              Refresh Data
+            </Button>
+          </div>
+        </div>
+        
+        {/* Two column layout for Supporting and Contradictory Research */}
+        <div className="grid md:grid-cols-2 gap-8">
+          {/* Supporting Research */}
+          <div>
+            <h4 className="text-lg font-medium mb-4 flex items-center">
+              <span className="w-3 h-3 rounded-full bg-green-500 mr-2"></span>
+              Supporting Research ({supporting.length})
+            </h4>
+            <div className="space-y-4">
+              {supporting.length === 0 ? (
+                <p className="text-gray-500">No supporting research articles found.</p>
+              ) : (
+                supporting.map((article, index) => (
+                  <div key={index} className="border-l-4 border-l-green-500 p-4 bg-white shadow-sm rounded-md">
+                    <h5 className="font-medium text-blue-900 mb-1">
+                      <a href={article.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                        {article.title}
+                      </a>
+                    </h5>
+                    <p className="text-sm text-gray-500 mt-1">
+                      {typeof article.journal === 'string' 
+                        ? article.journal 
+                        : article.journal && typeof article.journal === 'object' 
+                          ? (article.journal.name || '') 
+                          : ''
+                      }
+                      {article.year && article.journal ? ` (${article.year})` : article.year ? `(${article.year})` : ''}
+                    </p>
+                    {article.classificationReason && (
+                      <p className="text-sm text-gray-700 mt-2 bg-green-50 p-2 rounded border-l-2 border-l-green-400">
+                        <span className="text-green-600 font-medium">Supporting: </span>{article.classificationReason}
+                      </p>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          
+          {/* Contradicting Research */}
+          <div>
+            <h4 className="text-lg font-medium mb-4 flex items-center">
+              <span className="w-3 h-3 rounded-full bg-red-500 mr-2"></span>
+              Contradicting Research ({contradictory.length})
+            </h4>
+            <div className="space-y-4">
+              {contradictory.length === 0 ? (
+                <p className="text-gray-500">No contradicting research articles found.</p>
+              ) : (
+                contradictory.map((article, index) => (
+                  <div key={index} className="border-l-4 border-l-red-500 p-4 bg-white shadow-sm rounded-md">
+                    <h5 className="font-medium text-blue-900 mb-1">
+                      <a href={article.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                        {article.title}
+                      </a>
+                    </h5>
+                    <p className="text-sm text-gray-500 mt-1">
+                      {typeof article.journal === 'string' 
+                        ? article.journal 
+                        : article.journal && typeof article.journal === 'object' 
+                          ? (article.journal.name || '') 
+                          : ''
+                      }
+                      {article.year && article.journal ? ` (${article.year})` : article.year ? `(${article.year})` : ''}
+                    </p>
+                    {article.classificationReason && (
+                      <p className="text-sm text-gray-700 mt-2 bg-red-50 p-2 rounded border-l-2 border-l-red-400">
+                        <span className="text-red-600 font-medium">Contradicting: </span>{article.classificationReason}
+                      </p>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Contradictory Research */}
-        <div>
-          <h4 className="text-lg font-medium mb-4 flex items-center">
-            <span className="w-3 h-3 rounded-full bg-red-500 mr-2"></span>
-            Contradictory Research
-          </h4>
-          <div className="space-y-4">
-            {contradictory.length === 0 ? (
-              <p className="text-gray-500">No contradictory research articles found.</p>
-            ) : (
-              contradictory.map((article, index) => (
-                <div key={index} className="border-l-4 border-l-red-500 p-4 bg-white shadow-sm rounded-md">
+        {/* Option to show neutral articles below the two columns */}
+        {neutral && neutral.length > 0 && (
+          <div className="mt-8">
+            <h4 className="text-lg font-medium mb-4 flex items-center">
+              <span className="w-3 h-3 rounded-full bg-gray-500 mr-2"></span>
+              Neutral Research ({neutral.length})
+            </h4>
+            <div className="grid md:grid-cols-2 gap-4">
+              {neutral.map((article, index) => (
+                <div key={index} className="border-l-4 border-l-gray-300 p-4 bg-white shadow-sm rounded-md">
                   <h5 className="font-medium text-blue-900 mb-1">
                     <a href={article.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
                       {article.title}
                     </a>
                   </h5>
-                  {article.finding && (
-                    <p className="text-sm text-gray-700 my-2 bg-red-50 p-2 rounded border-l-2 border-l-red-400">
-                      <span className="text-red-600 font-medium">This study challenges: </span>{article.finding}
+                  <p className="text-sm text-gray-500 mt-1">
+                    {typeof article.journal === 'string' 
+                      ? article.journal 
+                      : article.journal && typeof article.journal === 'object' 
+                        ? (article.journal.name || '') 
+                        : ''
+                    }
+                    {article.year && article.journal ? ` (${article.year})` : article.year ? `(${article.year})` : ''}
+                  </p>
+                  {article.classificationReason && (
+                    <p className="text-sm text-gray-700 mt-2 bg-gray-50 p-2 rounded border-l-2 border-l-gray-300">
+                      <span className="text-gray-600 font-medium">Neutral: </span>{article.classificationReason}
                     </p>
                   )}
                 </div>
-              ))
-            )}
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     );
   };
@@ -2295,7 +2669,7 @@ export default function ArticleSummaryPage() {
   };
 
   // Add a function to store article data in Supabase
-  const storeArticleData = useCallback(async (articleData: any) => {
+  const storeArticleData = useCallback(async (articleData: ArticleSummary) => {
     try {
       if (!articleData || !url) {
         console.log("Not storing article data - missing data or URL", { hasArticleData: !!articleData, url });
@@ -2308,21 +2682,17 @@ export default function ArticleSummaryPage() {
         title: articleData.title || articleTitle,
         source: articleSource,
         publish_date: publishDate || null,
-        summary: typeof articleData.summary === 'string' ? 
-          articleData.summary : 
-          (articleData.visualSummary && articleData.visualSummary.length > 0 ? 
-            articleData.visualSummary.map((item: any) => item.point).join(' ') : 
-            null),
-        visual_summary: articleData.visualSummary || [],
+        summary: articleData.summary,
+        visual_summary: articleData.visual_summary || [],
         keywords: articleData.keywords || [],
-        study_metadata: articleData.cohortAnalysis || null,
+        study_metadata: articleData.study_metadata || null,
         related_research: {
           supporting: relatedResearch.supporting,
           contradictory: relatedResearch.contradictory,
+          neutral: relatedResearch.neutral,
           totalFound: relatedResearch.totalFound,
           searchKeywords: relatedResearch.searchKeywords
         },
-        raw_content: articleData.content || articleData.rawContent || null
       };
       
       console.log("Attempting to store article data in database", { 
@@ -2359,7 +2729,9 @@ export default function ArticleSummaryPage() {
         hasSupporting: !!dataToStore.related_research?.supporting,
         supportingLength: dataToStore.related_research?.supporting?.length || 0,
         hasContradictory: !!dataToStore.related_research?.contradictory,
-        contradictoryLength: dataToStore.related_research?.contradictory?.length || 0
+        contradictoryLength: dataToStore.related_research?.contradictory?.length || 0,
+        hasNeutral: !!dataToStore.related_research?.neutral,
+        neutralLength: dataToStore.related_research?.neutral?.length || 0
       });
       
       // Send the data to our API
@@ -2401,10 +2773,78 @@ export default function ArticleSummaryPage() {
   // Modify the part where result is set to also store in Supabase
   useEffect(() => {
     // If we have a result and a URL, store the data
-    if (result && url && !isLoading) {
+    if (result && url && !loading) {
       storeArticleData(result);
     }
-  }, [result, url, isLoading, storeArticleData]);
+  }, [result, url, loading, storeArticleData]);
+
+  // Add an effect to automatically fetch related research when keywords are available
+  useEffect(() => {
+    // Only fetch if we have keywords and no research data yet
+    if (extractedKeywords.length > 0 && 
+        relatedResearch.supporting.length === 0 && 
+        relatedResearch.contradictory.length === 0 && 
+        relatedResearch.neutral.length === 0 && 
+        !relatedResearch.error && 
+        !loading) {
+      console.log('[DEBUG] Auto-fetching related research with keywords:', extractedKeywords);
+      console.log('[DEBUG] Current relatedResearch state:', relatedResearch);
+      console.log('[DEBUG] Current loading state:', { loading, showLoadingOverlay, currentStep });
+      
+      // Short delay to ensure UI is not blocked
+      setTimeout(() => {
+        fetchRelatedResearchQuietly(extractedKeywords);
+      }, 300);
+    } else {
+      console.log('[DEBUG] Not auto-fetching related research. Conditions:',
+        { 
+          hasKeywords: extractedKeywords.length > 0,
+          hasNoSupportingData: relatedResearch.supporting.length === 0,
+          hasNoContradictoryData: relatedResearch.contradictory.length === 0,
+          hasNoNeutralData: relatedResearch.neutral.length === 0,
+          hasNoError: !relatedResearch.error,
+          isNotLoading: !loading
+        }
+      );
+    }
+  }, [extractedKeywords, relatedResearch, loading]);
+
+  // Add direct component mounting effects to ensure we fetch data
+  useEffect(() => {
+    // Check if we have result data with keywords but no research data
+    if (result && 
+        result.keywords && 
+        Array.isArray(result.keywords) && 
+        result.keywords.length > 0 && 
+        extractedKeywords.length === 0) {
+      // Update extracted keywords from result
+      console.log("[DEBUG] Setting extracted keywords from result:", result.keywords);
+      setExtractedKeywords(result.keywords);
+    } else if (result) {
+      console.log("[DEBUG] Not setting keywords from result. Current state:", { 
+        hasResult: !!result,
+        hasKeywordsInResult: result && result.keywords && Array.isArray(result.keywords),
+        keywordsCount: result?.keywords?.length || 0,
+        currentExtractedKeywords: extractedKeywords,
+      });
+    }
+  }, [result, extractedKeywords]);
+  
+  // Also add a manual trigger at a specific point in the main loading flow
+  useEffect(() => {
+    // If we've completed extracting keywords but not yet started searching for articles
+    if (completedSteps.includes("extractingKeywords") && 
+        !completedSteps.includes("searchingSimilarArticles") && 
+        extractedKeywords.length > 0) {
+      console.log("[DEBUG] Detected completed keywords extraction, triggering related research search");
+      console.log("[DEBUG] Current completedSteps:", completedSteps);
+      console.log("[DEBUG] Current extractedKeywords:", extractedKeywords);
+      fetchRelatedResearch(extractedKeywords);
+      
+      // Mark this step as started
+      updateLoadingStep("searchingSimilarArticles");
+    }
+  }, [completedSteps, extractedKeywords]);
 
   return (
     <div className="container max-w-screen-xl mx-auto py-6 px-4">
@@ -2429,199 +2869,265 @@ export default function ArticleSummaryPage() {
         completedSteps={completedSteps}
         keywords={extractedKeywords}
       />
-      
-      <div className="flex justify-between items-start">
-        <div>
-          {/* Original article title */}
-          {!isLoading && (
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">
-              {articleTitle || "Article Summary"}
-            </h1>
-          )}
-          
-          {/* AI Summary title */}
-          {!isLoading && result && (
-            <div className="text-blue-700 text-base font-medium">
-              AI Summary: <span className="font-normal">{result.title}</span>
+
+      {/* URL Input form */}
+      {!loading && !result && !error && (
+        <div className="max-w-4xl mx-auto mt-12">
+          <form onSubmit={handleAnalyzeSubmit} className="mb-10">
+            <div className="flex flex-col md:flex-row gap-3">
+              <div className="flex-1">
+                <input
+                  type="url"
+                  placeholder="Enter a URL to a scientific article (e.g. https://www.ncbi.nlm.nih.gov/pmc/articles/...)"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50 px-4 py-3"
+                  required
+                />
+              </div>
+              <Button 
+                type="submit" 
+                className={`md:w-auto ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                disabled={loading}
+              >
+                {loading ? 'Processing...' : 'Analyze Article'} 
+              </Button>
             </div>
-          )}
+          </form>
+
+          <div className="text-center">
+            <h2 className="text-xl text-gray-700 mb-6">How it works</h2>
+            <div className="grid md:grid-cols-3 gap-4 max-w-3xl mx-auto">
+              <div className="bg-white p-6 rounded-lg shadow-sm">
+                <div className="text-blue-500 text-3xl mb-3">📝</div>
+                <h3 className="font-medium text-gray-800 mb-2">1. Paste article URL</h3>
+                <p className="text-gray-600 text-sm">Input a link to a scientific article you'd like to analyze</p>
+              </div>
+              
+              <div className="bg-white p-6 rounded-lg shadow-sm">
+                <div className="text-blue-500 text-3xl mb-3">🤖</div>
+                <h3 className="font-medium text-gray-800 mb-2">2. AI analysis</h3>
+                <p className="text-gray-600 text-sm">Our AI extracts, summarizes, and organizes the most important information</p>
+              </div>
+              
+              <div className="bg-white p-6 rounded-lg shadow-sm">
+                <div className="text-blue-500 text-3xl mb-3">🔍</div>
+                <h3 className="font-medium text-gray-800 mb-2">3. Get insights</h3>
+                <p className="text-gray-600 text-sm">Review key findings, methodology details, and related research</p>
+              </div>
+            </div>
+          </div>
         </div>
-        
-        {/* Action buttons - moved up */}
-        {!isLoading && result && (
-          <div className="flex space-x-2">
-            {/* Removed the Save button since articles are automatically saved */}
-            <Button id="share-button" variant="outline" size="sm" className="h-9 px-3 border-gray-200">
-              <Share2Icon className="h-4 w-4 mr-2" />
-              Share
-            </Button>
-            <Button id="print-button" variant="outline" size="sm" className="h-9 px-3 border-gray-200">
-              <PrinterIcon className="h-4 w-4 mr-2" />
-              Print
-            </Button>
-            <Button id="export-button" variant="outline" size="sm" className="h-9 px-3 border-gray-200">
-              <DownloadIcon className="h-4 w-4 mr-2" />
-              Export
+      )}
+
+      {/* Show error */}
+      {error && (
+        <div className="max-w-4xl mx-auto mt-8 p-6 bg-red-50 rounded-lg border border-red-100">
+          <h2 className="text-xl font-medium text-red-800 mb-3">Error Analysis Failed</h2>
+          <p className="text-red-700 mb-4">{error}</p>
+          <div className="flex gap-3">
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setError(null);
+                setUrl('');
+              }}
+              className="border-red-300 text-red-700 hover:bg-red-50"
+            >
+              Try Another URL
             </Button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Content area */}
-      <div className="space-y-6">
-        {/* Rest of the component remains unchanged */}
-        
-        {/* Loading indicator */}
-        {isLoading && (
-          <div className="border border-gray-200 rounded-md overflow-hidden">
-            <div className="bg-white py-8">
-              <div className="flex flex-col items-center justify-center space-y-6 px-4">
-                <div className="space-y-5 w-full max-w-md">
-                  {/* Loading spinner */}
-                  <div className="flex items-center justify-center">
-                    <div className="w-12 h-12 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin"></div>
-                  </div>
-                  <p className="text-center text-gray-600">
-                    Loading article summary...
-                  </p>
-                </div>
+      {/* Show result */}
+      {!loading && result && (
+        <div className="space-y-6">
+          {/* Header for the article */}
+          <div className="mb-6">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+              <div className="flex-1">
+                <h2 className="text-xl md:text-2xl font-bold text-gray-900">
+                  {result.title || result.originalTitle || articleTitle || "Article Analysis"}
+                </h2>
                 
-                <div className="text-sm text-gray-500 text-center mt-4">
-                  This may take up to a minute depending on the article length
+                {result.summarized_title && result.summarized_title !== result.title && result.summarized_title !== result.originalTitle && (
+                  <p className="text-gray-600 mt-1 italic">
+                    <span className="font-medium">AI Summary:</span> {result.summarized_title}
+                  </p>
+                )}
+                
+                <div className="flex items-center text-sm text-gray-500 mt-2">
+                  {articleSource && <span className="mr-2">{articleSource}</span>}
+                  {publishDate && (
+                    <>
+                      <span className="mx-2">•</span>
+                      <span>{publishDate}</span>
+                    </>
+                  )}
+                  {url && (
+                    <>
+                      <span className="mx-2">•</span>
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline flex items-center">
+                        View Original 
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                      </a>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
           </div>
-        )}
 
-        {/* Error display */}
-        {!isLoading && error && (
+          {/* Key findings */}
           <div className="border border-gray-200 rounded-md overflow-hidden">
             <div className="bg-white py-4 px-6">
-              <h3 className="text-lg font-medium text-red-600">Error</h3>
-            </div>
-            <div className="bg-white px-6 py-5">
-              <p>{error}</p>
-              
-              {(error.includes('paywall') || error.includes('403') || error.includes('Forbidden') || error.includes('subscription') || error.includes('access')) && (
-                <div className="mt-4 bg-blue-50 p-4 rounded-md border border-blue-200">
-                  <h4 className="font-medium text-blue-700 mb-2">Suggestions to access this article:</h4>
-                  <ul className="list-disc pl-5 text-gray-700 space-y-2">
-                    <li>Try accessing through your institutional library website</li>
-                    <li>Search for an open access version on <a href={`https://scholar.google.com/scholar?q=${encodeURIComponent(articleTitle || url)}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Google Scholar</a></li>
-                    <li>Check if available on <a href={`https://www.researchgate.net/search?q=${encodeURIComponent(articleTitle || url)}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">ResearchGate</a></li>
-                    <li>Look for a preprint on <a href={`https://www.semanticscholar.org/search?q=${encodeURIComponent(articleTitle || url)}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Semantic Scholar</a></li>
-                  </ul>
-                </div>
-              )}
-              
-              <div className="mt-4">
-                <Button onClick={() => router.push('/dashboard')}>
-                  Return to Dashboard
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Results display */}
-        {!isLoading && result && (
-          <div className="space-y-6">
-            {/* Key findings */}
-            <div className="border border-gray-200 rounded-md overflow-hidden">
-              <div className="bg-white py-4 px-6">
-                <h3 className="text-lg font-medium text-blue-900">Key Findings</h3>
-                <p className="text-sm text-gray-500">
-                  The most important discoveries from this research
-                </p>
-              </div>
-              <div className="bg-white px-6 py-5">
-                {renderVisualSummary()}
-              </div>
-            </div>
-
-            {/* Keywords */}
-            <div className="border border-gray-200 rounded-md overflow-hidden">
-              <div className="bg-white py-4 px-6">
-                <h3 className="text-lg font-medium text-blue-900">Keywords</h3>
-                <p className="text-sm text-gray-500">
-                  Important topics and terminology from the article
-                </p>
-              </div>
-              <div className="bg-white px-6 py-5">
-                {renderKeywords()}
-              </div>
-            </div>
-
-            {/* Related Research */}
-            <div className="border border-gray-200 rounded-md overflow-hidden">
-              <div className="bg-white py-4 px-6">
-                <h3 className="text-lg font-medium text-blue-900">Related Research</h3>
-                <p className="text-sm text-gray-500">
-                  Articles with supporting or contradicting findings
-                </p>
-              </div>
-              <div className="bg-white px-6 py-5">
-                {renderRelatedResearch()}
-              </div>
-            </div>
-
-            {/* Cohort Analysis */}
-            <div className="border border-gray-200 rounded-md overflow-hidden">
-              <div className="bg-white py-4 px-6">
-                <h3 className="text-lg font-medium text-blue-900">Cohort Analysis</h3>
-                <p className="text-sm text-gray-500">
-                  Details about the research participants and study design
-                </p>
-              </div>
-              <div className="bg-white px-6 py-5">
-                {renderCohortAnalysis()}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Display raw text if there's streamed text but no parsed result */}
-        {!isLoading && !result && streamedText && (
-          <div className="border border-gray-200 rounded-md overflow-hidden">
-            <div className="bg-white py-4 px-6">
-              <h3 className="text-lg font-medium text-blue-900">Summary</h3>
+              <h3 className="text-lg font-medium text-blue-900">Key Findings</h3>
               <p className="text-sm text-gray-500">
-                {parseError ? "We couldn't parse the AI response as structured data, but you can still read it below" : "Raw summary text"}
+                The most important discoveries from this research
               </p>
             </div>
             <div className="bg-white px-6 py-5">
-              {parseError && (
-                <div className="mb-4 bg-amber-50 text-amber-700 p-4 rounded-md border border-amber-200">
-                  <p className="font-medium mb-1">Note:</p>
-                  <p>{parseError}</p>
-                </div>
-              )}
-              
-              <div className="prose prose-blue max-w-none">
-                {streamedText.split('###').map((section, index) => {
-                  if (index === 0) return null;
-                  
-                  const lines = section.trim().split('\n');
-                  const heading = lines[0];
-                  const content = lines.slice(1).join('\n');
-                  
-                  return (
-                    <div key={index} className="mb-6">
-                      <h3 className="text-lg font-medium text-blue-800 mb-2">
-                        {heading}
-                      </h3>
-                      <div className="whitespace-pre-wrap text-gray-700">
-                        {content}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              {renderVisualSummary()}
             </div>
           </div>
-        )}
-      </div>
+
+          {/* Keywords */}
+          <div className="border border-gray-200 rounded-md overflow-hidden">
+            <div className="bg-white py-4 px-6">
+              <h3 className="text-lg font-medium text-blue-900">Keywords</h3>
+              <p className="text-sm text-gray-500">
+                Important topics and terminology from the article
+              </p>
+              
+              {/* Add debug button for keywords */}
+              <Button 
+                variant="outline"
+                size="sm" 
+                className="text-gray-600 border-gray-300 hover:bg-gray-50 text-xs mt-2"
+                onClick={() => {
+                  console.log("[KEYWORD-TEST] Current extractedKeywords state:", extractedKeywords);
+                  
+                  // Show alert with current keywords
+                  if (extractedKeywords.length > 0) {
+                    window.alert(`Current extracted keywords:\n${extractedKeywords.join(', ')}`);
+                  } else {
+                    window.alert('No keywords have been extracted yet.');
+                  }
+                  
+                  // Check for keywords directly in result object
+                  if (result && result.keywords) {
+                    console.log("[KEYWORD-TEST] Keywords in result object:", result.keywords);
+                  } else {
+                    console.log("[KEYWORD-TEST] No keywords in result object");
+                  }
+                }}
+              >
+                Debug Keywords
+              </Button>
+            </div>
+            <div className="bg-white px-6 py-5">
+              {renderKeywords()}
+            </div>
+          </div>
+
+          {/* Related Research - Always show this section */}
+          <div className="border border-gray-200 rounded-md overflow-hidden">
+            <div className="bg-white py-4 px-6">
+              <h3 className="text-lg font-medium text-blue-900">Related Research</h3>
+              <p className="text-sm text-gray-500">
+                Articles with supporting, contradicting or neutral findings
+              </p>
+              
+              {/* Debug button for direct testing */}
+              <Button 
+                variant="outline"
+                className="text-purple-600 border-purple-300 hover:bg-purple-50 text-sm mt-2"
+                onClick={() => {
+                  console.log("[DEBUG] Running test query for cancer/immunotherapy");
+                  const testKeywords = ["cancer", "immunotherapy", "treatment"];
+                  setExtractedKeywords(testKeywords);
+                  
+                  // Create a test request directly
+                  fetch('/api/semantic-scholar-paper-relevance', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      keywords: testKeywords,
+                      mainArticleTitle: "Advances in Cancer Immunotherapy",
+                      mainArticleFindings: ["Immunotherapy has shown promise in treating various cancers"],
+                      testMode: false
+                    }),
+                  })
+                  .then(response => {
+                    console.log("[DEBUG] Test API response status:", response.status);
+                    if (!response.ok) {
+                      throw new Error(`API responded with ${response.status}`);
+                    }
+                    return response.json();
+                  })
+                  .then(data => {
+                    console.log("[DEBUG] Test query successful! Data:", {
+                      supportingCount: data.supporting?.length || 0,
+                      contradictoryCount: data.contradictory?.length || 0,
+                      neutralCount: data.neutral?.length || 0
+                    });
+                    
+                    // Update state with the new data
+                    setRelatedResearch({
+                      supporting: data.supporting || [],
+                      contradictory: data.contradictory || [],
+                      neutral: data.neutral || [],
+                      totalFound: data.totalFound || 0,
+                      searchKeywords: testKeywords
+                    });
+                  })
+                  .catch(error => {
+                    console.error("[DEBUG] Test query failed:", error);
+                    setRelatedResearch(prev => ({
+                      ...prev,
+                      error: `Test query failed: ${error.message}`
+                    }));
+                  });
+                }}
+              >
+                Test With Cancer/Immunotherapy Data
+              </Button>
+            </div>
+            <div className="bg-white px-6 py-5">
+              {extractedKeywords.length > 0 ? (
+                renderRelatedResearch()
+              ) : (
+                <div className="p-6 text-center">
+                  <p className="text-gray-600">
+                    Waiting for keywords to be extracted to search for related research...
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Cohort Analysis */}
+          <div className="border border-gray-200 rounded-md overflow-hidden">
+            <div className="bg-white py-4 px-6">
+              <h3 className="text-lg font-medium text-blue-900">Cohort Analysis</h3>
+              <p className="text-sm text-gray-500">
+                Details about the research participants and study design
+              </p>
+            </div>
+            <div className="bg-white px-6 py-5">
+              {renderCohortAnalysis()}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Related Research Test section - Remove this duplicate test section */}
+      
     </div>
   );
 } 

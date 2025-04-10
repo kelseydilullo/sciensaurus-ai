@@ -1,4 +1,7 @@
+'use client';
+
 import Link from "next/link"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
@@ -10,12 +13,312 @@ import {
   LucideSearch,
   LucideUsers,
   LucideArrowRight,
+  LucideX
 } from "lucide-react"
 import { SciensaurusLogo } from "@/components/sciensaurus-logo"
+import { ArticleAnalyzer } from "@/components/article-analyzer"
+import ArticleSummaryContent from "@/components/article-summary-content"
+import React from "react"
+
+interface ArticleData {
+  title: string;
+  source: string;
+  publish_date: string | null;
+  summary: string;
+  rawText: string;
+  visual_summary: any[];
+  keywords: string[];
+  study_metadata: {
+    studyType?: string;
+    duration?: string;
+    dateRange?: string;
+    cohortSize?: number;
+    summary?: string;
+    cohortStratification?: {
+      gender?: {
+        male?: number;
+        female?: number;
+        other?: number;
+      };
+      ageRanges?: Array<{
+        range: string;
+        percentage: number;
+      }>;
+      demographics?: Array<{
+        region: string;
+        percentage: number;
+      }>;
+    };
+    demographics?: {
+      age?: string;
+      gender?: string;
+      ethnicities?: string[];
+      locations?: string[];
+    };
+    notes?: string[];
+  };
+}
+
+interface RelatedResearch {
+  supporting: any[];
+  contradictory: any[];
+  totalFound: number;
+  searchKeywords: string[];
+  isPreview: boolean;
+  error?: string;
+}
 
 export default function LandingPage() {
+  const [showArticleSummary, setShowArticleSummary] = useState(false);
+  const [articleData, setArticleData] = useState<ArticleData | null>(null);
+  const [articleUrl, setArticleUrl] = useState('');
+  const [relatedResearch, setRelatedResearch] = useState<RelatedResearch>({
+    supporting: [],
+    contradictory: [],
+    totalFound: 0,
+    searchKeywords: [],
+    isPreview: true
+  });
+  // Add ref for ArticleAnalyzer reset function
+  const resetUrlInputRef = React.useRef<() => void>(() => {});
+
+  // Sample article data for demo purposes
+  const getSampleArticleData = () => {
+    return {
+      title: "Impact of Whole Food Consumption on Blood Glucose Regulation and Metabolic Health",
+      source: "Journal of Clinical Nutrition",
+      publish_date: "April 12, 2023",
+      summary: "Whole foods significantly improve glucose regulation compared to processed foods, even with identical macronutrient profiles. This study found diets rich in fiber from vegetables and whole grains slowed glucose absorption and prevented blood sugar spikes by 42% compared to processed food diets. Continuous glucose monitoring showed 37% less glycemic variability in participants consuming whole foods versus processed foods with identical macronutrient ratios.",
+      rawText: "### Original Article Title: Impact of Whole Food Consumption on Blood Glucose Regulation and Metabolic Health\n\n### Summarized Title: Whole foods significantly improve glucose regulation compared to processed foods, even with identical macronutrient profiles\n\n### Visual Summary:\n🥦 Diets rich in fiber from vegetables and whole grains slowed glucose absorption and prevented blood sugar spikes by 42% compared to processed food diets.\n📊 Continuous glucose monitoring showed 37% less glycemic variability in participants consuming whole foods versus processed foods with identical macronutrient ratios.\n⏱️ Whole food meals resulted in sustained energy levels for 4-5 hours compared to 2-3 hours with processed food meals of equal caloric content.\n🍎 Antioxidants and polyphenols in fruits and vegetables improved insulin sensitivity by 22% in study participants after just 14 days.\n🥄 Reducing ultra-processed foods lowered average blood glucose levels by 15% even without reducing total carbohydrate intake.\n🧠 Cognitive performance tests showed 18% improvement in focus and attention during the whole food phase compared to the processed food phase.\n💤 Sleep quality improved by 27% during the whole food intervention, correlating with improved overnight glucose regulation.\n\n### Keywords: Whole Foods, Blood Glucose, Glycemic Response, Insulin Sensitivity, Metabolic Health, Processed Foods, Nutrition, Fiber, Polyphenols, Continuous Glucose Monitoring\n\n### Methodology:\nStudy Type: 12-week crossover design\nCohort Size: 248 participants\n\nDemographics:\n- Age Distribution: 18-30: 15%, 31-45: 30%, 46-60: 40%, 61-75: 15%\n- Gender: Male: 48%, Female: 52%\n- Metabolic Status: Healthy: 60%, Pre-diabetic: 40%\n- Geographic Distribution: North America (45%), Europe (30%), Asia (15%), Australia (10%)\n\nNotes:\n- All participants completed both the whole food and processed food phases\n- Continuous glucose monitoring was used throughout the 12-week period\n- Dietary compliance was verified through food journals and biomarker testing\n- Participants maintained consistent exercise habits throughout the study",
+      visual_summary: [
+        { emoji: "🥦", point: "Diets rich in fiber from vegetables and whole grains slowed glucose absorption and prevented blood sugar spikes by 42% compared to processed food diets." },
+        { emoji: "📊", point: "Continuous glucose monitoring showed 37% less glycemic variability in participants consuming whole foods versus processed foods with identical macronutrient ratios." },
+        { emoji: "⏱️", point: "Whole food meals resulted in sustained energy levels for 4-5 hours compared to 2-3 hours with processed food meals of equal caloric content." },
+        { emoji: "🍎", point: "Antioxidants and polyphenols in fruits and vegetables improved insulin sensitivity by 22% in study participants after just 14 days." },
+        { emoji: "🥄", point: "Reducing ultra-processed foods lowered average blood glucose levels by 15% even without reducing total carbohydrate intake." },
+        { emoji: "🧠", point: "Cognitive performance tests showed 18% improvement in focus and attention during the whole food phase compared to the processed food phase." },
+        { emoji: "💤", point: "Sleep quality improved by 27% during the whole food intervention, correlating with improved overnight glucose regulation." }
+      ],
+      keywords: ["Whole Foods", "Blood Glucose", "Glycemic Response", "Insulin Sensitivity", "Metabolic Health", "Processed Foods", "Nutrition", "Fiber", "Polyphenols", "Continuous Glucose Monitoring"],
+      study_metadata: {
+        studyType: "12-week crossover design",
+        cohortSize: 248,
+        demographics: {
+          age: [
+            { range: "18-30", percentage: 15 },
+            { range: "31-45", percentage: 30 },
+            { range: "46-60", percentage: 40 },
+            { range: "61-75", percentage: 15 }
+          ],
+          gender: {
+            male: 48,
+            female: 52,
+            other: 0
+          },
+          regions: [
+            { region: "North America", percentage: 45 },
+            { region: "Europe", percentage: 30 },
+            { region: "Asia", percentage: 15 },
+            { region: "Australia", percentage: 10 }
+          ]
+        },
+        notes: [
+          "All participants completed both the whole food and processed food phases",
+          "Continuous glucose monitoring was used throughout the 12-week period",
+          "Dietary compliance was verified through food journals and biomarker testing",
+          "Participants maintained consistent exercise habits throughout the study"
+        ]
+      }
+    };
+  };
+
+  // Sample related research data
+  const getSampleRelatedResearch = () => {
+    return {
+      supporting: [
+        {
+          title: "Dietary Fiber Consumption and Postprandial Glucose Excursions: A Systematic Review and Meta-Analysis",
+          journal: "Diabetes Care",
+          year: 2023,
+          url: "https://pubmed.example.com/dietary-fiber",
+          finding: "Higher fiber intake consistently reduces postprandial glucose spikes. Soluble fiber shows strongest effect on glycemic control."
+        },
+        {
+          title: "Food Matrix Effects on Nutrient Absorption and Metabolic Response",
+          journal: "American Journal of Clinical Nutrition",
+          year: 2023,
+          url: "https://pubmed.example.com/food-matrix",
+          finding: "Whole food matrices slow nutrient absorption compared to isolated nutrients. Food structure preservation improves satiety and metabolic markers."
+        },
+        {
+          title: "Polyphenol-Rich Foods and Insulin Sensitivity: Mechanisms and Clinical Implications",
+          journal: "Journal of Nutritional Biochemistry",
+          year: 2022,
+          url: "https://pubmed.example.com/polyphenols",
+          finding: "Polyphenols improve cellular glucose uptake and insulin signaling. Regular consumption reduces inflammatory markers associated with insulin resistance."
+        }
+      ],
+      contradictory: [
+        {
+          title: "Individual Variability in Glycemic Responses to Identical Foods",
+          journal: "Cell",
+          year: 2023,
+          url: "https://pubmed.example.com/variability",
+          finding: "High inter-individual variability in glucose responses to identical meals. Personalized approaches may be more effective than general whole food recommendations."
+        },
+        {
+          title: "Caloric Density vs Food Quality: Comparative Effects on Metabolic Health",
+          journal: "Obesity Research",
+          year: 2023,
+          url: "https://pubmed.example.com/caloric-density",
+          finding: "Caloric restriction with processed foods showed similar weight loss to whole foods. Total caloric intake may be more important than food quality for some outcomes."
+        },
+        {
+          title: "Cost-Benefit Analysis of Whole Food vs. Processed Food Diets in Low-Income Populations",
+          journal: "Public Health Nutrition",
+          year: 2022,
+          url: "https://pubmed.example.com/cost-benefit",
+          finding: "Whole food diets significantly more expensive and less accessible. Socioeconomic barriers limit practical implementation of study findings."
+        }
+      ],
+      totalFound: 6,
+      searchKeywords: ["whole foods", "blood glucose", "glycemic response", "insulin sensitivity", "nutrition"],
+      isPreview: true
+    };
+  };
+
+  // Function to handle article analysis completion
+  const handleAnalysisComplete = (url: string, data: any) => {
+    console.log("Article analysis complete for URL:", url);
+    console.log("Received data:", data);
+    
+    // Save the URL the user entered
+    setArticleUrl(url);
+    
+    // Check if we received sufficient data from the API
+    const hasMinimalData = data && 
+                          (data.title || data.summary || 
+                           (data.visual_summary && data.visual_summary.length) || 
+                           (data.keywords && data.keywords.length));
+    
+    // If we have sufficient API data, use it; otherwise use sample data
+    if (hasMinimalData) {
+      console.log("Using API data for summary - found valid data");
+      
+      // Format the data properly to match ArticleData interface
+      const processedData = {
+        title: data.title || "Article Summary",
+        source: data.source || url.split('/')[2] || "Web Article", // Extract domain as fallback source
+        publish_date: data.publish_date || null,
+        summary: data.summary || "",
+        rawText: data.content || data.rawText || "",
+        visual_summary: data.visual_summary || [],
+        keywords: data.keywords || [],
+        study_metadata: data.study_metadata || data.cohortAnalysis || {}
+      } as ArticleData;
+      
+      console.log("Processed data:", {
+        title: processedData.title,
+        source: processedData.source,
+        publish_date: processedData.publish_date,
+        summaryLength: processedData.summary.length,
+        visual_summary_count: processedData.visual_summary.length,
+        keywords: processedData.keywords,
+        has_study_metadata: !!processedData.study_metadata && Object.keys(processedData.study_metadata).length > 0
+      });
+      
+      setArticleData(processedData);
+      
+      // If API provided related research, use it; otherwise use sample data for preview
+      const relatedResearchData = data.relatedResearch || getSampleRelatedResearch();
+      // Ensure isPreview flag is correctly set for the component state
+      relatedResearchData.isPreview = true; 
+            
+      setRelatedResearch(relatedResearchData);
+      setShowArticleSummary(true);
+    } else {
+      console.log("Using sample data for demo - insufficient API data");
+      console.log("Data quality check:", {
+        hasData: !!data,
+        hasTitle: data?.title ? true : false,
+        hasSummary: data?.summary ? true : false,
+        hasVisualSummary: data?.visual_summary ? true : false,
+        hasKeywords: data?.keywords ? true : false
+      });
+      
+      // If API data is insufficient, use sample data for demo
+      const sampleData = getSampleArticleData() as unknown as ArticleData;
+      setArticleData(sampleData);
+      
+      // Add a slight delay before showing the summary to simulate API processing
+      setTimeout(() => {
+        setRelatedResearch(getSampleRelatedResearch());
+        setShowArticleSummary(true);
+        
+        // Scroll to the article summary
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }, 500);
+      
+      return; // Exit early as we're using setTimeout
+    }
+    
+    // Scroll to the article summary
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Function to hide the article summary and return to the landing page
+  const handleCloseArticleSummary = () => {
+    setShowArticleSummary(false);
+    // Clear the URL input when returning to landing page
+    resetUrlInputRef.current();
+  };
+
+  // Mock function for retry since we won't implement that fully here
+  const retryRelatedResearch = () => {
+    console.log("This would retry fetching related research");
+  };
+
   return (
     <div className="min-h-screen bg-white">
+      {/* Article Summary Overlay when an article has been analyzed */}
+      {showArticleSummary && (
+        <div className="fixed inset-0 bg-white z-50 overflow-y-auto">
+          <div className="sticky top-0 bg-[#1e3a6d] text-white z-10 flex justify-between items-center p-4">
+            <div className="flex items-center gap-2">
+              <SciensaurusLogo className="h-8 w-8" variant="outline" />
+              <span className="text-2xl font-bold">Sciensaurus</span>
+            </div>
+            <Button 
+              variant="ghost" 
+              size="icon"
+              className="text-white hover:bg-[#152c52]"
+              onClick={handleCloseArticleSummary}
+              aria-label="Close article summary"
+            >
+              <LucideX className="h-5 w-5" />
+            </Button>
+          </div>
+          <div className="container mx-auto px-4 py-6">
+            <ArticleSummaryContent 
+              articleData={articleData}
+              relatedResearch={{
+                ...relatedResearch,
+                isPreview: true
+              }}
+              url={articleUrl}
+              retryRelatedResearch={retryRelatedResearch}
+              isPreview={true}
+              onBack={handleCloseArticleSummary}
+            />
+            <div className="mt-8 text-center">
+              <Button onClick={handleCloseArticleSummary} variant="outline" className="border-[#1e3a6d] text-[#1e3a6d] hover:bg-[#1e3a6d] hover:text-white">
+                Return to Home
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-[#1e3a6d] text-white">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
@@ -61,27 +364,14 @@ export default function LandingPage() {
 
           {/* URL Input Box */}
           <div className="max-w-2xl mx-auto mb-10 relative landing-page-search">
-            <form action="/demo">
-              <Input
-                type="url"
-                name="url"
-                placeholder="Paste article URL here..."
-                className="py-6 pl-12 pr-4 rounded-lg text-black"
+            <div className="bg-white rounded-md overflow-hidden">
+              <ArticleAnalyzer 
+                previewMode={true} 
+                transparent={true}
+                onAnalysisComplete={handleAnalysisComplete}
+                resetUrlInputRef={resetUrlInputRef}
               />
-              <LucideSearch className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" />
-              <Button
-                type="submit"
-                className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-blue-500 hover:bg-blue-600"
-              >
-                Analyze <LucideArrowRight className="ml-1 h-4 w-4" />
-              </Button>
-            </form>
-          </div>
-
-          <div className="flex flex-wrap justify-center gap-4">
-            <Link href="/demo">
-              <Button className="bg-white text-[#1e3a6d] hover:bg-gray-100">See Demo</Button>
-            </Link>
+            </div>
           </div>
         </div>
       </section>
@@ -137,22 +427,22 @@ export default function LandingPage() {
             <UseCaseCard
               title="Healthcare Professionals"
               description="Doctors and medical practitioners stay up-to-date with the latest research to provide better patient care and treatment options."
-              image="/placeholder.svg?height=200&width=400"
+              image="/landing_healthprofessionals.jpg"
             />
             <UseCaseCard
               title="Patients"
               description="Understand complex medical articles assigned by your doctor about your health conditions in clear, accessible language."
-              image="/placeholder.svg?height=200&width=400"
+              image="/landing_patients.jpg"
             />
             <UseCaseCard
               title="Academic Researchers"
               description="University researchers and students can quickly process large volumes of literature and identify relevant studies."
-              image="/placeholder.svg?height=200&width=400"
+              image="/landing_academicresearchers.jpg"
             />
             <UseCaseCard
               title="Health-Conscious Individuals"
               description="Stay informed about advancements in nutrition, aging, wellness trends, psychology, and other health-related topics."
-              image="/placeholder.svg?height=200&width=400"
+              image="/landing_healthconscious.jpg"
             />
           </div>
 
@@ -186,7 +476,7 @@ export default function LandingPage() {
       </section>
 
       {/* Enterprise Section */}
-      <section className="py-16 md:py-24 bg-[#1e3a6d] text-white">
+      <section id="enterprise" className="py-16 md:py-24 bg-[#1e3a6d] text-white">
         <div className="container mx-auto px-4">
           <div className="max-w-3xl mx-auto text-center">
             <h2 className="text-3xl md:text-4xl font-bold mb-6">Enterprise Solutions</h2>
@@ -217,96 +507,16 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="bg-gray-900 text-white py-12">
+      <footer className="bg-gray-900 text-white py-8">
         <div className="container mx-auto px-4">
-          <div className="grid md:grid-cols-4 gap-8">
-            <div>
-              <div className="flex items-center gap-2 mb-4">
-                <SciensaurusLogo className="h-6 w-6" variant="outline" />
-                <span className="text-xl font-bold">Sciensaurus</span>
-              </div>
-              <p className="text-gray-400">
-                AI-powered scientific research companion that makes complex research accessible.
-              </p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <SciensaurusLogo className="h-8 w-8" variant="outline" />
+              <span className="text-xl font-bold">Sciensaurus</span>
             </div>
-            <div>
-              <h3 className="font-bold text-lg mb-4">Product</h3>
-              <ul className="space-y-2">
-                <li>
-                  <Link href="#" className="text-gray-400 hover:text-white">
-                    Features
-                  </Link>
-                </li>
-                <li>
-                  <Link href="#" className="text-gray-400 hover:text-white">
-                    Pricing
-                  </Link>
-                </li>
-                <li>
-                  <Link href="#" className="text-gray-400 hover:text-white">
-                    Enterprise
-                  </Link>
-                </li>
-                <li>
-                  <Link href="#" className="text-gray-400 hover:text-white">
-                    Case Studies
-                  </Link>
-                </li>
-              </ul>
+            <div className="text-gray-400">
+              <p>© 2025 Sciensaurus. All rights reserved.</p>
             </div>
-            <div>
-              <h3 className="font-bold text-lg mb-4">Resources</h3>
-              <ul className="space-y-2">
-                <li>
-                  <Link href="#" className="text-gray-400 hover:text-white">
-                    Documentation
-                  </Link>
-                </li>
-                <li>
-                  <Link href="#" className="text-gray-400 hover:text-white">
-                    Blog
-                  </Link>
-                </li>
-                <li>
-                  <Link href="#" className="text-gray-400 hover:text-white">
-                    Support
-                  </Link>
-                </li>
-                <li>
-                  <Link href="#" className="text-gray-400 hover:text-white">
-                    API
-                  </Link>
-                </li>
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-bold text-lg mb-4">Company</h3>
-              <ul className="space-y-2">
-                <li>
-                  <Link href="#" className="text-gray-400 hover:text-white">
-                    About
-                  </Link>
-                </li>
-                <li>
-                  <Link href="#" className="text-gray-400 hover:text-white">
-                    Careers
-                  </Link>
-                </li>
-                <li>
-                  <Link href="#" className="text-gray-400 hover:text-white">
-                    Privacy
-                  </Link>
-                </li>
-                <li>
-                  <Link href="#" className="text-gray-400 hover:text-white">
-                    Terms
-                  </Link>
-                </li>
-              </ul>
-            </div>
-          </div>
-          <div className="border-t border-gray-800 mt-12 pt-8 text-center text-gray-400">
-            <p>© {new Date().getFullYear()} Sciensaurus. All rights reserved.</p>
           </div>
         </div>
       </footer>
@@ -324,11 +534,11 @@ function FeatureCard({
   description: string;
 }) {
   return (
-    <Card className="p-6 hover:shadow-lg transition-shadow">
+    <div className="bg-white p-6 rounded-lg shadow-sm hover:shadow-lg transition-shadow">
       <div className="mb-4">{icon}</div>
       <h3 className="text-xl font-bold mb-2 text-[#1e3a6d]">{title}</h3>
       <p className="text-gray-600">{description}</p>
-    </Card>
+    </div>
   )
 }
 
@@ -342,13 +552,23 @@ function UseCaseCard({
   image: string;
 }) {
   return (
-    <Card className="overflow-hidden hover:shadow-lg transition-shadow">
-      <img src={image || "/placeholder.svg"} alt={title} className="w-full h-48 object-cover" />
+    <div className="bg-white rounded-lg overflow-hidden shadow-sm hover:shadow-lg transition-shadow">
+      <div className="w-full h-48 overflow-hidden">
+        <img 
+          src={image} 
+          alt={`${title} - Sciensaurus use case illustration`} 
+          className="w-full h-full object-cover transform hover:scale-105 transition-transform duration-500"
+          onError={(e) => {
+            // Fallback to placeholder if image fails to load
+            e.currentTarget.src = "/placeholder.svg";
+          }}
+        />
+      </div>
       <div className="p-6">
         <h3 className="text-xl font-bold mb-2 text-[#1e3a6d]">{title}</h3>
         <p className="text-gray-600">{description}</p>
       </div>
-    </Card>
+    </div>
   )
 }
 

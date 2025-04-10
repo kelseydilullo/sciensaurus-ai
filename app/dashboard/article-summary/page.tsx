@@ -122,15 +122,39 @@ export default function ArticleSummaryPage() {
   
   // Add state for storing related research results
   const [relatedResearch, setRelatedResearch] = useState<{
-    supporting: Array<{title: string, url: string, abstract?: string, finding?: string}>;
-    contradictory: Array<{title: string, url: string, abstract?: string, finding?: string}>;
+    supporting: Array<{
+      title: string, 
+      url: string, 
+      abstract?: string, 
+      finding?: string,
+      classification?: string,
+      classificationReason?: string
+    }>;
+    contradictory: Array<{
+      title: string, 
+      url: string, 
+      abstract?: string, 
+      finding?: string,
+      classification?: string,
+      classificationReason?: string
+    }>;
+    neutral: Array<{
+      title: string, 
+      url: string, 
+      abstract?: string, 
+      finding?: string,
+      classification?: string,
+      classificationReason?: string
+    }>;
     totalFound?: number;
     error?: string;
     searchKeywords?: string[];
   }>({
     supporting: [],
     contradictory: [],
-    totalFound: 0
+    neutral: [],
+    totalFound: 0,
+    searchKeywords: []
   });
   
   // Helper function to update loading steps
@@ -371,18 +395,30 @@ export default function ArticleSummaryPage() {
   // Fetch related research without showing loading steps (for preprocessed articles)
   const fetchRelatedResearchQuietly = async (keywords: string[]) => {
     try {
-      const response = await fetch('/api/semantic-scholar-search', {
+      console.log('Fetching related research quietly with keywords:', keywords);
+      
+      // Extract key findings from visual summary if available
+      const keyFindings = result?.visualSummary
+        ? result.visualSummary.map((item: { emoji: string; point: string }) => item.point)
+        : [];
+      
+      console.log('Extracted key findings:', keyFindings);
+      
+      // Call the paper relevance API instead of the search API
+      const response = await fetch('/api/semantic-scholar-paper-relevance', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           keywords,
-          url,
-          articleTitle
+          mainArticleTitle: articleTitle || result?.title || '',
+          mainArticleFindings: keyFindings,
         }),
       });
 
+      console.log('API response status:', response.status);
+      
       if (!response.ok) {
         throw new Error(`Failed to fetch related research: ${response.statusText}`);
       }
@@ -396,6 +432,7 @@ export default function ArticleSummaryPage() {
       setRelatedResearch({
         supporting: data.supporting || [],
         contradictory: data.contradictory || [],
+        neutral: data.neutral || [],
         totalFound: data.totalFound || 0,
         searchKeywords: keywords,
       });
@@ -430,6 +467,7 @@ export default function ArticleSummaryPage() {
     setRelatedResearch({
       supporting: [],
       contradictory: [],
+      neutral: [],
       totalFound: 0,
       searchKeywords: []
     });
@@ -627,16 +665,21 @@ export default function ArticleSummaryPage() {
         searchKeywords: keywords
       }));
       
-      // Call the API to fetch related research
-      const response = await fetch('/api/semantic-scholar-search', {
+      // Extract key findings from visual summary if available
+      const keyFindings = result?.visualSummary
+        ? result.visualSummary.map((item: { emoji: string; point: string }) => item.point)
+        : [];
+      
+      // Call the API to fetch related research - use the paper relevance API
+      const response = await fetch('/api/semantic-scholar-paper-relevance', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           keywords,
-          url,
-          articleTitle
+          mainArticleTitle: articleTitle || result?.title || '',
+          mainArticleFindings: keyFindings,
         }),
       });
 
@@ -650,10 +693,11 @@ export default function ArticleSummaryPage() {
         throw new Error(data.error);
       }
 
-      // Store the research results
+      // Store the research results - make sure to include neutral articles too
       setRelatedResearch({
         supporting: data.supporting || [],
         contradictory: data.contradictory || [],
+        neutral: data.neutral || [],
         totalFound: data.totalFound || 0,
         searchKeywords: keywords,
       });
@@ -681,7 +725,7 @@ export default function ArticleSummaryPage() {
       updateLoadingStep("assessingResearch", true);
         setIsLoading(false);
       }
-  }, [url, articleTitle, updateLoadingStep]);
+  }, [url, articleTitle, result, updateLoadingStep]);
 
   // Function to parse the plain text response
   const parseTextResponse = (text: string) => {
@@ -1848,17 +1892,17 @@ export default function ArticleSummaryPage() {
 
   // Add a new function to render related research
   const renderRelatedResearch = () => {
-    const { supporting, contradictory, error: researchError, searchKeywords } = relatedResearch;
+    const { supporting, contradictory, neutral, error: researchError, searchKeywords } = relatedResearch;
     
     if (researchError) {
-  return (
+      return (
         <div className="p-4 bg-red-50 border border-red-100 rounded-md">
           <p className="text-red-600">Error fetching related research: {researchError}</p>
         </div>
       );
     }
     
-    if (supporting.length === 0 && contradictory.length === 0) {
+    if (supporting.length === 0 && contradictory.length === 0 && neutral.length === 0) {
       if (currentStep === "searchingSimilarArticles" && !completedSteps.includes("searchingSimilarArticles")) {
         return (
           <div className="p-6 text-center">
@@ -1898,9 +1942,10 @@ export default function ArticleSummaryPage() {
                       {article.title}
                     </a>
                   </h5>
-                  {article.finding && (
+                  {(article.classificationReason || article.finding) && (
                     <p className="text-sm text-gray-700 my-2 bg-green-50 p-2 rounded border-l-2 border-l-green-400">
-                      <span className="text-green-600 font-medium">This study supports: </span>{article.finding}
+                      <span className="text-green-600 font-medium">This study supports: </span>
+                      {article.classificationReason || article.finding}
                     </p>
                   )}
                 </div>
@@ -1926,9 +1971,39 @@ export default function ArticleSummaryPage() {
                       {article.title}
                     </a>
                   </h5>
-                  {article.finding && (
+                  {(article.classificationReason || article.finding) && (
                     <p className="text-sm text-gray-700 my-2 bg-red-50 p-2 rounded border-l-2 border-l-red-400">
-                      <span className="text-red-600 font-medium">This study challenges: </span>{article.finding}
+                      <span className="text-red-600 font-medium">This study challenges: </span>
+                      {article.classificationReason || article.finding}
+                    </p>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Neutral Research */}
+        <div className="md:col-span-2">
+          <h4 className="text-lg font-medium mb-4 flex items-center">
+            <span className="w-3 h-3 rounded-full bg-gray-500 mr-2"></span>
+            Neutral Research
+          </h4>
+          <div className="space-y-4">
+            {neutral.length === 0 ? (
+              <p className="text-gray-500">No neutral research articles found.</p>
+            ) : (
+              neutral.map((article, index) => (
+                <div key={index} className="border-l-4 border-l-gray-500 p-4 bg-white shadow-sm rounded-md">
+                  <h5 className="font-medium text-gray-700 mb-1">
+                    <a href={article.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                      {article.title}
+                    </a>
+                  </h5>
+                  {(article.classificationReason || article.finding) && (
+                    <p className="text-sm text-gray-500 my-2 bg-gray-50 p-2 rounded border-l-2 border-l-gray-300">
+                      <span className="text-gray-600 font-medium">This study is neutral: </span>
+                      {article.classificationReason || article.finding}
                     </p>
                   )}
                 </div>

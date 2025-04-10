@@ -2,470 +2,259 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { generateObject } from 'ai';
 import { openai } from '@ai-sdk/openai';
+import { traceAICall } from '@/utils/ai-config';
 
 // Use Node.js runtime
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// Define types for Semantic Scholar API
-type SemanticScholarPaper = {
-  paperId: string;
+// Define type for PubMed ESummary result item
+// (Structure based on common ESummary JSON format)
+type PubMedArticleSummary = {
+  uid: string; // PMID
+  pubdate: string;
+  epubdate: string;
+  source: string; // Journal
+  authors: { name: string }[];
+  lastauthor: string;
   title: string;
-  url: string;
-  abstract?: string;
-  venue?: string;
-  year?: number;
-  citationCount?: number;
-  openAccessPdf?: {
-    url: string;
-  };
+  sorttitle: string;
+  volume: string;
+  issue: string;
+  pages: string;
+  lang: string[];
+  issn: string;
+  essn: string;
+  pubtype: string[];
+  recordstatus: string;
+  pubstatus: string;
+  articleids: { idtype: string; idtypen: number; value: string }[];
+  history: { pubstatus: string; date: string }[];
+  references: any[];
+  attributes: string[];
+  pmcrefcount: number;
+  fulljournalname: string;
+  elocationid: string;
+  doctype: string;
+  srccontriblist: any[];
+  booktitle: string;
+  medium: string;
+  edition: string;
+  publisherlocation: string;
+  publishername: string;
+  srcdate: string;
+  reportnumber: string;
+  availablefromurl: string;
+  locationlabel: string;
+  doccontriblist: any[];
+  docdate: string;
+  bookname: string;
+  chapter: string;
+  sortpubdate: string;
+  sortfirstauthor: string;
+  vernaculartitle: string;
+  // Abstract might not be directly in summary, depends on request/availability
+  // We will primarily use Title for classification prompt
 };
 
-type SemanticScholarResponse = {
-  total: number;
-  offset: number;
-  next?: string;
-  data: SemanticScholarPaper[];
-};
-
-// Schema for classification response
-const ClassificationSchema = z.object({
-  isSupportive: z.boolean(),
-  confidence: z.number().min(0).max(1),
-  explanation: z.string(),
+// Define the structure for classified articles (adapted for PubMed)
+const ClassifiedArticleSchema = z.object({
+  pmid: z.string(), // Changed from paperId
+  title: z.string(),
+  url: z.string().optional().nullable(), // PubMed URL
+  authors: z.array(z.string()).optional().nullable(), // Store author names
+  journal: z.string().optional().nullable(), // Store journal source
+  pubDate: z.string().optional().nullable(), // Store publication date
+  classification: z.enum(['Supporting', 'Contradictory', 'Neutral']),
+  classificationReason: z.string(),
+  // Removed: abstract, tldr, publicationTypes (less reliable from ESummary)
 });
+
+// Schema for the bulk classification response from OpenAI
+const BulkClassificationSchema = z.object({
+  supporting: z.array(ClassifiedArticleSchema),
+  contradictory: z.array(ClassifiedArticleSchema),
+  neutral: z.array(ClassifiedArticleSchema),
+});
+
+// Define the type based on the schema
+type ClassifiedArticle = z.infer<typeof ClassifiedArticleSchema>;
+
+const NCBI_API_BASE = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils';
+const NCBI_API_KEY = process.env.NCBI_API_KEY; // Optional API key
+
+async function makeNcbiRequest(endpoint: string, params: Record<string, string>) {
+  const url = new URL(`${NCBI_API_BASE}/${endpoint}`);
+  Object.entries(params).forEach(([key, value]) => url.searchParams.append(key, value));
+  if (NCBI_API_KEY) {
+    url.searchParams.append('api_key', NCBI_API_KEY);
+  }
+  console.log(`Fetching from NCBI E-utilities: ${url.toString()}`);
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('NCBI API error:', response.status, errorText);
+    throw new Error(`NCBI API error (${endpoint}): ${response.status} - ${errorText || response.statusText}`);
+  }
+  return response.json();
+}
 
 export async function POST(req: Request) {
   try {
-    // Parse the request body
     const body = await req.json();
-    const { keywords, url, articleTitle } = body;
-    
-    // Validate input
+    const { keywords, mainArticleTitle, mainArticleFindings } = body;
+
+    // --- Input Validation ---
     if (!keywords || !Array.isArray(keywords) || keywords.length === 0) {
-      return new Response(JSON.stringify({ 
-        error: 'Keywords are required and must be an array of strings' 
-      }), { 
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return NextResponse.json({ error: 'Keywords are required' }, { status: 400 });
     }
-    
+    if (!mainArticleTitle || typeof mainArticleTitle !== 'string') {
+      return NextResponse.json({ error: 'Main article title is required' }, { status: 400 });
+    }
+    if (!mainArticleFindings || !Array.isArray(mainArticleFindings) || mainArticleFindings.length === 0) {
+      return NextResponse.json({ error: 'Main article findings are required' }, { status: 400 });
+    }
+
     console.log('Received search request with keywords:', keywords);
-    
-    // Build query string from keywords
-    // Combine keywords with OR operator for broader results
-    // Limit to 10 keywords max to avoid overly complex queries
+    console.log('Main article title:', mainArticleTitle);
+
+    // --- PubMed ESearch API Call ---
     const trimmedKeywords = keywords.slice(0, 10).map(k => k.trim());
-    const queryString = trimmedKeywords.join(' OR ');
-    
+    const searchQuery = trimmedKeywords.join(' ');
+    let pmids: string[] = [];
+    let totalFound = 0;
+
     try {
-      // First, try to fetch data from Semantic Scholar API
-      const searchUrl = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(queryString)}&limit=20&fields=title,abstract,url,year,citationCount,influentialCitationCount,isOpenAccess,authors,journal`;
-      
-      console.log('Fetching from Semantic Scholar:', searchUrl);
-      
-      const response = await fetch(searchUrl, {
-        headers: {
-          'x-api-key': process.env.SEMANTIC_SCHOLAR_API_KEY || ''
-        }
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Semantic Scholar API error:', response.status, errorText);
-        throw new Error(`Semantic Scholar API error: ${response.status} - ${errorText || response.statusText}`);
-      }
-      
-      const data = await response.json();
-      console.log(`Found ${data.total} results. Processing ${data.data?.length || 0} items.`);
-      
-      // Process the articles
-      const articles = data.data || [];
-      
-      // Sort articles by citation count to get most impactful research first
-      articles.sort((a: any, b: any) => (b.citationCount || 0) - (a.citationCount || 0));
-      
-      // Separate processed articles will be added to these arrays
-      const supportingArticles: any[] = [];
-      const contradictoryArticles: any[] = [];
-      
-      // Process articles in batches to avoid overwhelming the OpenAI API
-      const batchSize = 4; // Process in batches of 4 articles
-      for (let i = 0; i < Math.min(articles.length, 16); i += batchSize) {
-        const batch = articles.slice(i, i + batchSize);
-        
-        // Process each batch concurrently
-        const batchResults = await Promise.all(
-          batch.map(async (article: any) => {
-            try {
-              if (!article.abstract) {
-                return null; // Skip articles without abstracts
-              }
-              
-              // Create a minimal representation of the article data for classification
-              const articleData = {
-                title: article.title,
-                abstract: article.abstract ? article.abstract.slice(0, 1000) : "",
-                year: article.year,
-                journal: article.journal || "Unknown Journal",
-                url: article.url || "",
-                citationCount: article.citationCount || 0
-              };
-              
-              // Classify article using OpenAI
-              const classification = await classifySingleArticle(
-                {
-                  paperId: article.paperId || "",
-                  title: article.title,
-                  url: article.url || "",
-                  abstract: article.abstract,
-                  year: article.year,
-                  citationCount: article.citationCount
-                },
-                keywords,
-                articleTitle
-              );
-              
-              // Format the result to match what the UI expects
-              return {
-                ...articleData,
-                classification: classification.isSupportive ? 'supporting' : 'contradictory',
-                finding: classification.articleData.finding
-              };
-            } catch (articleError) {
-              console.error('Error processing article:', articleError);
-              return null;
-            }
-          })
-        );
-        
-        // Filter out nulls and add to appropriate category
-        batchResults.filter(Boolean).forEach((result: any) => {
-          if (result.classification === 'supporting') {
-            supportingArticles.push(result);
-          } else if (result.classification === 'contradictory') {
-            contradictoryArticles.push(result);
-          }
-        });
-      }
-      
-      console.log(`Classified ${supportingArticles.length} supporting and ${contradictoryArticles.length} contradictory articles`);
-      
-      // Return the results
-      return new Response(JSON.stringify({
-        supporting: supportingArticles,
-        contradictory: contradictoryArticles,
-        totalFound: data.total || 0,
-        searchKeywords: trimmedKeywords
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      });
-      
-    } catch (apiError: any) {
-      console.error('API request error:', apiError);
-      
-      // More detailed error handling for connection issues
-      let errorMessage = apiError.message || 'An error occurred while searching for related research';
-      let statusCode = 500;
-      
-      // Check for specific network error patterns
-      if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ECONNRESET')) {
-        errorMessage = 'Connection to the research database was refused. This might be a temporary issue, please try again later.';
-        statusCode = 503; // Service Unavailable
-      } else if (errorMessage.includes('ETIMEDOUT')) {
-        errorMessage = 'Connection to the research database timed out. This might be due to heavy traffic, please try again later.';
-        statusCode = 504; // Gateway Timeout
-      } else if (errorMessage.includes('ENOTFOUND')) {
-        errorMessage = 'Could not resolve the research database hostname. Please check your network connection.';
-        statusCode = 503;
-      }
-      
-      return new Response(JSON.stringify({ error: errorMessage }), {
-        status: statusCode,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-  } catch (error: any) {
-    console.error('General error in semantic-scholar-search route:', error);
-    
-    return new Response(JSON.stringify({ 
-      error: 'Failed to process related research request: ' + (error.message || 'Unknown error') 
-    }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
-}
-
-// Function to classify articles with retry capability
-async function classifyArticlesWithRetry(
-  articles: SemanticScholarPaper[], 
-  keywords: string[],
-  mainArticleTitle?: string,
-  maxRetries = 2
-): Promise<{
-  supporting: Array<{title: string, url: string, abstract?: string, finding?: string}>,
-  contradictory: Array<{title: string, url: string, abstract?: string, finding?: string}>
-}> {
-  console.log(`Starting parallel classification of ${articles.length} articles`);
-  
-  // Process all articles in parallel instead of sequentially
-  const classificationPromises = articles.map(article => 
-    classifySingleArticle(article, keywords, mainArticleTitle, maxRetries)
-  );
-  
-  // Wait for all classifications to complete
-  const classifiedArticles = await Promise.all(classificationPromises);
-  
-  // Separate into supporting and contradictory
-  const supporting: Array<{title: string, url: string, abstract?: string, finding?: string}> = [];
-  const contradictory: Array<{title: string, url: string, abstract?: string, finding?: string}> = [];
-  
-  classifiedArticles.forEach(result => {
-    if (result.isSupportive) {
-      supporting.push(result.articleData);
-    } else {
-      contradictory.push(result.articleData);
-    }
-  });
-  
-  console.log(`Parallel classification complete: ${supporting.length} supporting, ${contradictory.length} contradictory`);
-  
-  return {
-    supporting,
-    contradictory
-  };
-}
-
-// Helper function to classify a single article
-async function classifySingleArticle(
-  article: SemanticScholarPaper,
-  keywords: string[],
-  mainArticleTitle?: string,
-  maxRetries = 2
-): Promise<{
-  isSupportive: boolean;
-  articleData: {title: string, url: string, abstract?: string, finding?: string}
-}> {
-  try {
-    // Clean abstract for analysis
-    const abstract = article.abstract || '';
-    
-    console.log(`Classifying article: "${article.title}"`);
-    
-    // Use a simplified approach for classification with retries
-    let classification: { isSupportive: boolean; confidence: number; explanation: string } | null = null;
-    let retryCount = 0;
-    
-    // Try multiple times to get a valid classification
-    while (retryCount <= maxRetries && !classification) {
-      try {
-        const mainTopic = keywords.join(', ');
-        
-        const result = await generateObject({
-          model: openai('gpt-3.5-turbo'),
-          schema: ClassificationSchema,
-          prompt: `
-          I need your help classifying a scientific article in relation to a main research topic.
-          
-          Main topic: "${mainTopic}"
-          ${mainArticleTitle ? `Main article title: "${mainArticleTitle}"` : ''}
-          
-          Related article title: "${article.title}"
-          Related article abstract:
-          "${abstract.substring(0, 1000)}"
-          
-          Your task is to decide if this related article is SUPPORTIVE or CONTRADICTORY to the main topic.
-          
-          USE THESE EXACT DEFINITIONS:
-          - SUPPORTIVE: The article expands on, confirms, or provides additional evidence that aligns with the main topic
-          - CONTRADICTORY: The article challenges, presents opposing findings, or highlights limitations/contrary evidence
-          
-          IMPORTANT: Your output must adhere to this exact format:
-          {
-            "isSupportive": boolean (true if supportive, false if contradictory),
-            "confidence": number between 0 and 1,
-            "explanation": string (1-2 sentences describing the specific finding)
-          }
-          
-          Guidelines for your analysis:
-          - Be critical and look for actual contradictions in methodology, findings, or conclusions
-          - An article that merely discusses the topic without contradicting it is NOT automatically supportive
-          - Only classify as supportive if it provides evidence or findings that genuinely support/align with the main topic
-          - Only classify as contradictory if it provides evidence or findings that oppose/challenge the main topic
-          
-          Look for phrases indicating contradiction like:
-          - "in contrast to", "challenges the notion", "contrary to", "fails to support"
-          - "did not find", "no significant effect", "limitations", "risks", "adverse effects"
-          
-          For the explanation field:
-          - Phrase the finding as a SPECIFIC CLAIM about the main topic 
-          - DO NOT use phrases like "This study shows..." or "This research demonstrates..."
-          - Instead, write the claim directly, e.g.: "Intermittent fasting improves metabolic health markers in adults with diabetes"
-          - Focus on extracting the most relevant claim from the article related to the main topic
-          - Keep the explanation to 1-2 sentences maximum
-          `,
-          temperature: 0.3
-        });
-        
-        // Check if the result has the required properties
-        if (result && 
-            'isSupportive' in result && 
-            'confidence' in result && 
-            'explanation' in result &&
-            typeof result.isSupportive === 'boolean' && 
-            typeof result.confidence === 'number' && 
-            typeof result.explanation === 'string') {
-          
-          classification = {
-            isSupportive: result.isSupportive,
-            confidence: result.confidence,
-            explanation: result.explanation
-          };
-          
-          console.log(`Classification successful for "${article.title}": ${classification.isSupportive ? 'Supportive' : 'Contradictory'} (confidence: ${classification.confidence})`);
-        } else {
-          console.log(`Invalid classification result on attempt ${retryCount + 1}, retrying...`);
-          retryCount++;
-        }
-      } catch (e) {
-        console.error(`Classification error on attempt ${retryCount + 1}:`, e);
-        retryCount++;
-        
-        // Wait briefly before retrying
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-    }
-    
-    // If we couldn't get a valid classification after retries, use a default
-    if (!classification) {
-      console.log(`Using default classification for "${article.title}"`);
-      const defaultFinding = extractKeyFindings(article.title, abstract, keywords, true);
-      classification = {
-        isSupportive: true, // Default to supportive
-        confidence: 0.5,
-        explanation: defaultFinding
+      const esearchParams = {
+        db: 'pubmed',
+        term: searchQuery,
+        retmax: '10',
+        retmode: 'json',
+        usehistory: 'y' // Good practice
       };
+      const esearchResult = await makeNcbiRequest('esearch.fcgi', esearchParams);
+      
+      pmids = esearchResult?.esearchresult?.idlist || [];
+      totalFound = parseInt(esearchResult?.esearchresult?.count || '0', 10);
+      console.log(`PubMed ESearch: Found ${totalFound} results. Got ${pmids.length} PMIDs.`);
+
+    } catch (apiError: any) {
+      console.error('PubMed ESearch request failed:', apiError);
+      return NextResponse.json({
+          error: `Failed to search PubMed: ${apiError.message || 'Unknown API error'}`,
+          supporting: [], contradictory: [], neutral: [], totalFound: 0, searchKeywords: trimmedKeywords
+      }, { status: 503 });
     }
-    
-    // Use the full explanation as finding rather than just the first sentence
-    // to provide more specific information about the article's relevance
-    const articleData = {
-      title: article.title,
-      url: article.url || `https://www.semanticscholar.org/paper/${article.paperId}`,
-      abstract: article.abstract,
-      finding: classification.explanation
-    };
-    
-    return {
-      isSupportive: classification.isSupportive,
-      articleData
-    };
-  } catch (error) {
-    console.error(`Error processing article "${article?.title || 'unknown'}":`, error);
-    // Return a default result for problematic articles
-    const articleData = {
-      title: article.title,
-      url: article.url || `https://www.semanticscholar.org/paper/${article.paperId}`,
-      abstract: article.abstract,
-      finding: "Unable to determine the relationship to the main topic."
-    };
-    
-    return {
-      isSupportive: true, // Default to supportive
-      articleData
-    };
+
+    if (pmids.length === 0) {
+        console.log('No relevant PMIDs found by PubMed ESearch.');
+        return NextResponse.json({
+            supporting: [], contradictory: [], neutral: [], totalFound: totalFound, searchKeywords: trimmedKeywords
+        }, { status: 200 });
+    }
+
+    // --- PubMed ESummary API Call ---
+    let articlesData: Record<string, PubMedArticleSummary> = {};
+    try {
+      const esummaryParams = {
+        db: 'pubmed',
+        id: pmids.join(','),
+        retmode: 'json'
+      };
+      const esummaryResult = await makeNcbiRequest('esummary.fcgi', esummaryParams);
+      articlesData = esummaryResult?.result || {};
+      // Filter out the 'uids' entry which is just a list of IDs
+      delete articlesData.uids;
+      console.log(`PubMed ESummary: Retrieved details for ${Object.keys(articlesData).length} PMIDs.`);
+
+    } catch (apiError: any) {
+      console.error('PubMed ESummary request failed:', apiError);
+      // Proceed with classification using only titles if summary fails?
+      // For now, return error.
+      return NextResponse.json({
+          error: `Failed to retrieve PubMed summaries: ${apiError.message || 'Unknown API error'}`,
+          supporting: [], contradictory: [], neutral: [], totalFound: totalFound, searchKeywords: trimmedKeywords
+      }, { status: 503 });
+    }
+
+    // --- Prepare Data for OpenAI --- 
+    // Map the PubMed summary data
+    const articlesForPrompt = Object.values(articlesData).map(article => ({
+        pmid: article.uid,
+        title: article.title || 'No Title Available',
+        // Construct PubMed URL
+        url: `https://pubmed.ncbi.nlm.nih.gov/${article.uid}/`,
+        authors: article.authors?.map(a => a.name) || [],
+        journal: article.source || null,
+        pubDate: article.pubdate || null,
+        // Abstract is often missing or truncated in ESummary, so we rely on title mostly
+    }));
+
+    if (articlesForPrompt.length === 0) {
+      console.log('No article details could be prepared for OpenAI prompt.');
+       return NextResponse.json({
+            supporting: [], contradictory: [], neutral: [], totalFound: totalFound, searchKeywords: trimmedKeywords
+        }, { status: 200 });
+    }
+
+    // --- OpenAI Bulk Classification --- 
+    // Adjust prompt for PubMed data (mainly title, maybe authors/journal)
+    const classificationPrompt = `
+      You are an expert research assistant. Your task is to classify a list of research papers from PubMed based on whether they support, contradict, or are neutral towards the findings of a main reference article.
+
+      Main Article Title: "${mainArticleTitle}"
+      Main Article Key Findings:
+      ${mainArticleFindings.map(f => `- ${f}`).join('\n')}
+
+      Research Papers from PubMed to Classify (primarily use Title for classification):
+      ${JSON.stringify(articlesForPrompt, null, 2)}
+
+      Instructions:
+      1. For each PubMed paper in the list, compare its Title (and other available metadata like authors, journal, pubDate if helpful) to the main article's title and key findings.
+      2. Determine if the paper primarily SUPPORTS the main article's findings, CONTRADICTS them, or is NEUTRAL (e.g., related but doesn't directly support or contradict, different focus).
+      3. Provide a concise, one-sentence reason for your classification.
+      4. Return the results ONLY in the specified JSON format with three arrays: "supporting", "contradictory", and "neutral". Each article object in the arrays must include the fields provided (pmid, title, url, authors, journal, pubDate) plus the "classification" (must be exactly "Supporting", "Contradictory", or "Neutral") and "classificationReason" fields. Do not include any articles that could not be classified.
+    `;
+
+    try {
+      // Type assertion needed as traceAICall might return unknown
+      const { object: classificationResult } = await traceAICall(
+        { name: 'pubmed-bulk-classify', model: 'gpt-4o' }, 
+        async () => {
+          return await generateObject({
+            model: openai('gpt-4o'),
+            schema: BulkClassificationSchema,
+            prompt: classificationPrompt,
+            maxTokens: 8192, // Keep increased limit
+          });
+        }
+      ) as { object: z.infer<typeof BulkClassificationSchema> };
+
+      console.log(`OpenAI Classification Complete: ${classificationResult.supporting.length} Supporting, ${classificationResult.contradictory.length} Contradictory, ${classificationResult.neutral.length} Neutral`);
+
+      return NextResponse.json({
+        supporting: classificationResult.supporting,
+        contradictory: classificationResult.contradictory,
+        totalFound: totalFound,
+        searchKeywords: trimmedKeywords
+      }, { status: 200 });
+
+    } catch (aiError: any) {
+      console.error('OpenAI classification error:', aiError);
+      return NextResponse.json({
+          error: `Failed to classify related research using AI: ${aiError.message || 'Unknown AI error'}`,
+          supporting: [], contradictory: [], neutral: [],
+          totalFound: totalFound,
+          searchKeywords: trimmedKeywords
+      }, { status: 500 });
+    }
+
+  } catch (error: any) {
+    console.error('General error in related research route:', error);
+    return NextResponse.json({ error: `Failed to process related research request: ${error.message || 'Unknown error'}` }, { status: 500 });
   }
 }
 
-/**
- * Extract key findings from article title and abstract when AI classification fails
- */
-function extractKeyFindings(title: string, abstract: string, keywords: string[], isSupporting: boolean): string {
-  // Clean and normalize text
-  const cleanedTitle = title.trim().toLowerCase();
-  const cleanedAbstract = abstract.trim().toLowerCase();
-  const searchTerms = keywords.map(k => k.toLowerCase());
-  
-  // Extract sentences with keyword mentions
-  const relevantSentences: string[] = [];
-  const abstractSentences = cleanedAbstract.split(/[.!?]+/).filter(s => s.trim().length > 15);
-  
-  // Score sentences based on relevance
-  const scoredSentences = abstractSentences.map(sentence => {
-    let score = 0;
-    // Higher score for sentences with keywords
-    searchTerms.forEach(term => {
-      if (sentence.includes(term)) score += 3;
-    });
-    
-    // Higher score for sentences with result-related terms
-    const resultTerms = ['found', 'showed', 'demonstrated', 'revealed', 'observed', 'concluded', 'suggests', 'indicates'];
-    resultTerms.forEach(term => {
-      if (sentence.includes(term)) score += 2;
-    });
-    
-    // Higher score for sentences with measurement or comparison terms
-    const measurementTerms = ['significant', 'increased', 'decreased', 'reduced', 'improved', 'higher', 'lower', 'greater', 'less'];
-    measurementTerms.forEach(term => {
-      if (sentence.includes(term)) score += 1;
-    });
-    
-    return { sentence, score };
-  });
-  
-  // Sort by score and get top sentences
-  scoredSentences.sort((a, b) => b.score - a.score);
-  
-  // Get the most relevant sentences
-  const topSentences = scoredSentences.filter(s => s.score > 0).slice(0, 2);
-  relevantSentences.push(...topSentences.map(s => s.sentence));
-  
-  const primaryKeyword = searchTerms[0] || 'this topic';
-  
-  // If we found relevant sentences, use those
-  if (relevantSentences.length > 0) {
-    // Create a finding that focuses on the claim rather than just the information
-    let sentence = relevantSentences[0].charAt(0).toUpperCase() + relevantSentences[0].slice(1);
-    if (!sentence.endsWith('.')) sentence += '.';
-    
-    // Add a relationship phrase depending on whether it's supporting or contradicting
-    if (isSupporting) {
-      return sentence;
-    } else {
-      return sentence;
-    }
-  }
-  
-  // Default findings based on title if no sentences found
-  if (isSupporting) {
-    // Extract likely benefit or result from title
-    if (cleanedTitle.includes('improve') || cleanedTitle.includes('increases') || 
-        cleanedTitle.includes('enhances') || cleanedTitle.includes('benefits')) {
-      return `${primaryKeyword} has beneficial effects on ${cleanedTitle.split(' ').slice(-3).join(' ')}.`;
-    }
-    
-    // Check if it's a review article
-    if (cleanedTitle.includes('review') || cleanedTitle.includes('meta-analysis') || cleanedTitle.includes('systematic')) {
-      return `there is compiled evidence supporting various aspects of ${primaryKeyword}.`;
-    }
-    
-    return `${primaryKeyword} positively affects ${cleanedTitle.split(' ').slice(-4).join(' ')}.`;
-  } else {
-    // Extract likely limitation from title
-    if (cleanedTitle.includes('limitation') || cleanedTitle.includes('challenge') || 
-        cleanedTitle.includes('risk') || cleanedTitle.includes('adverse')) {
-      return `${primaryKeyword} has potential limitations or challenges in relation to ${cleanedTitle.split(' ').slice(-3).join(' ')}.`;
-    }
-    
-    // Check if it's questioning effectiveness
-    if (cleanedTitle.includes('does it') || cleanedTitle.includes('effectiveness') || 
-        cleanedTitle.includes('efficacy') || cleanedTitle.includes('?')) {
-      return `certain aspects of ${primaryKeyword} may not be as effective as commonly believed.`;
-    }
-    
-    return `common assumptions about ${primaryKeyword} may need to be reconsidered based on new evidence.`;
-  }
-} 
+// --- REMOVE OLD HELPER FUNCTIONS ---
+// async function classifySingleArticle(...) { ... }
+// function extractKeyFindings(...) { ... } 

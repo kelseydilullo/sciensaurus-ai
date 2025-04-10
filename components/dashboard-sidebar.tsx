@@ -119,6 +119,7 @@ export function DashboardSidebar() {
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
+            {/* Move this item to the Demo section below
             <SidebarMenuItem>
               <SidebarMenuButton asChild isActive={pathname === "/dashboard/research-interests"}>
                 <Link href="/dashboard/research-interests" className="transition-colors duration-200">
@@ -132,6 +133,9 @@ export function DashboardSidebar() {
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
+            */}
+            {/* Commenting out "My Saved Articles" */}
+            {/*
             <SidebarMenuItem>
               <SidebarMenuButton asChild isActive={pathname === "/dashboard/saved-articles"}>
                 <Link href="/dashboard/saved-articles" className="transition-colors duration-200">
@@ -145,6 +149,9 @@ export function DashboardSidebar() {
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
+            */}
+            {/* Commenting out "Summarize Article" */}
+            {/*
             <SidebarMenuItem>
               <SidebarMenuButton asChild isActive={pathname === "/dashboard/summarize"}>
                 <Link href="/dashboard/summarize" className="transition-colors duration-200">
@@ -158,6 +165,7 @@ export function DashboardSidebar() {
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
+            */}
           </SidebarMenu>
         </div>
         
@@ -166,6 +174,20 @@ export function DashboardSidebar() {
             {expanded && "Demo"}
           </div>
           <SidebarMenu>
+            {/* Adding "My Research Interests" here */}
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild isActive={pathname === "/dashboard/research-interests"}>
+                <Link href="/dashboard/research-interests" className="transition-colors duration-200">
+                  <div className="flex items-center py-2 px-2 rounded-md hover:bg-blue-50">
+                    <div className={pathname === "/dashboard/research-interests" ? "text-[#1e3a6d]" : "text-gray-500"}>
+                      <LucideCompass className="h-5 w-5 min-w-5" />
+                    </div>
+                    {expanded && <span className={`ml-3 ${pathname === "/dashboard/research-interests" ? "font-medium text-[#1e3a6d]" : "text-gray-700"}`}>My Research Interests</span>}
+                    {!expanded && <span className="sr-only">My Research Interests</span>}
+                  </div>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton asChild isActive={pathname === "/dashboard/demo-doctor"}>
                 <Link href="/dashboard/demo-doctor" className="transition-colors duration-200">
