@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -95,43 +95,45 @@ export default function AuthCallback() {
   }, [router, searchParams]);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1 flex flex-col items-center text-center">
-          {status === 'loading' && (
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#1e3a6d] mb-4"></div>
-          )}
-          {status === 'success' && (
-            <div className="bg-green-100 p-3 rounded-full mb-4">
-              <Check className="h-10 w-10 text-green-600" />
-            </div>
-          )}
-          {status === 'error' && (
-            <div className="bg-red-100 p-3 rounded-full mb-4">
-              <AlertTriangle className="h-10 w-10 text-red-600" />
-            </div>
-          )}
-          <CardTitle className="text-2xl font-bold text-[#1e3a6d]">
-            {status === 'loading' ? 'Verifying Email' : 
-             status === 'success' ? 'Email Verified' : 'Verification Failed'}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4 text-center">
-          <p className="text-gray-600">{message}</p>
-          {error && <p className="text-sm text-red-500 mt-2">{error}</p>}
-          
-          {status === 'error' && (
-            <div className="pt-4">
-              <Button 
-                onClick={() => router.push('/login')} 
-                className="bg-[#1e3a6d] hover:bg-[#0f2a4d] text-white"
-              >
-                Back to Login
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+    <Suspense fallback={<div>Loading callback...</div>}>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="space-y-1 flex flex-col items-center text-center">
+            {status === 'loading' && (
+              <div className="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#1e3a6d] mb-4"></div>
+            )}
+            {status === 'success' && (
+              <div className="bg-green-100 p-3 rounded-full mb-4">
+                <Check className="h-10 w-10 text-green-600" />
+              </div>
+            )}
+            {status === 'error' && (
+              <div className="bg-red-100 p-3 rounded-full mb-4">
+                <AlertTriangle className="h-10 w-10 text-red-600" />
+              </div>
+            )}
+            <CardTitle className="text-2xl font-bold text-[#1e3a6d]">
+              {status === 'loading' ? 'Verifying Email' : 
+               status === 'success' ? 'Email Verified' : 'Verification Failed'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-center">
+            <p className="text-gray-600">{message}</p>
+            {error && <p className="text-sm text-red-500 mt-2">{error}</p>}
+            
+            {status === 'error' && (
+              <div className="pt-4">
+                <Button 
+                  onClick={() => router.push('/login')} 
+                  className="bg-[#1e3a6d] hover:bg-[#0f2a4d] text-white"
+                >
+                  Back to Login
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </Suspense>
   );
 } 
