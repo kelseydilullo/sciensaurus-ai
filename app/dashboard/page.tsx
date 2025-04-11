@@ -413,8 +413,10 @@ export default function DashboardPage() {
     });
     setIsAnalyzing(false);
     setShowLoadingOverlay(false);
-    // Reset the URL input field
-    setUrl(''); 
+    setUrl(''); // Reset the URL input field
+    
+    // Refresh dashboard stats
+    fetchDashboardStats();
   };
 
   // Function to format date
@@ -790,10 +792,12 @@ export default function DashboardPage() {
           />
         </div>
       ) : (
-        /* Standard Dashboard UI */
-        <div className="dashboard-content">
-          <div className="mb-8">
-            <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+        // Main Dashboard View
+        // Add w-full to ensure it takes available width
+        <div className="w-full flex-1 space-y-4 px-2 pt-6 pb-4 md:px-8 md:pt-8 md:pb-8">
+          {/* Header with title and analyze form */}
+          <div className="flex flex-col md:flex-row items-start justify-between space-y-2">
+            <h2 className="text-3xl font-bold tracking-tight text-gray-900">Dashboard</h2>
             <p className="text-gray-600">Hi {dashboardStats.user.firstName || firstName}. Here's your research overview.</p>
           </div>
 
@@ -917,7 +921,7 @@ export default function DashboardPage() {
                 <p className="text-gray-500 text-sm mb-4">Enter a URL above to get started</p>
               </div>
             ) : (
-              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-2">
                 {userArticles.slice(0, 8).map((article: ArticleSummary, index: number) => (
                   <div key={article.id || index}>
                     <Card className="overflow-hidden hover:shadow-md transition-shadow h-full border border-gray-200 bg-white">

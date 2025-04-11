@@ -8,6 +8,7 @@ import { AuthRedirect } from "@/components/auth-redirect"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { LucideSearch, LucideBell } from "lucide-react"
+import { cn } from "@/lib/utils"
 
 export default function DashboardLayout({
   children,
@@ -43,10 +44,15 @@ export default function DashboardLayout({
           <DashboardSidebar />
         </div>
 
-        {/* Main Content - with margin to accommodate sidebar */}
-        <div 
-          className="main-content flex-grow overflow-y-auto bg-gray-50 transition-all duration-300"
-          style={{ marginLeft: sidebarExpanded ? '16rem' : '5rem' }}
+        {/* Main Content - Use responsive margin classes */}
+        <div
+          className={cn(
+            "main-content flex-grow overflow-y-auto bg-gray-50 transition-all duration-300",
+            // Apply margin only on medium screens and up based on sidebar state
+            sidebarExpanded ? "md:ml-64" : "md:ml-20",
+            // Default margin for mobile is 0
+            "ml-0"
+          )}
         >
           {/* Header */}
           <header className="bg-white border-b border-gray-200 sticky top-0 z-10">

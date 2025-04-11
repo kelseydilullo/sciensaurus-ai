@@ -178,17 +178,19 @@ export async function POST(req: Request) {
     }
 
     // --- Prepare Data for OpenAI --- 
-    // Map the PubMed summary data
-    const articlesForPrompt = Object.values(articlesData).map(article => ({
-        pmid: article.uid,
-        title: article.title || 'No Title Available',
-        // Construct PubMed URL
-        url: `https://pubmed.ncbi.nlm.nih.gov/${article.uid}/`,
-        authors: article.authors?.map(a => a.name) || [],
-        journal: article.source || null,
-        pubDate: article.pubdate || null,
-        // Abstract is often missing or truncated in ESummary, so we rely on title mostly
-    }));
+    // Map the PubMed summary data and filter out the main article
+    const articlesForPrompt = Object.values(articlesData)
+        .map(article => ({
+            pmid: article.uid,
+            title: article.title || 'No Title Available',
+            url: `https://pubmed.ncbi.nlm.nih.gov/${article.uid}/`,
+            authors: article.authors?.map(a => a.name) || [],
+            journal: article.source || null,
+            pubDate: article.pubdate || null,
+        }))
+        .filter(article => article.title !== mainArticleTitle);
+
+    console.log(`Prepared ${articlesForPrompt.length} articles for OpenAI prompt (after filtering main article).`);
 
     if (articlesForPrompt.length === 0) {
       console.log('No article details could be prepared for OpenAI prompt.');
