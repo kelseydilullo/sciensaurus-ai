@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -98,7 +98,8 @@ const LoadingOverlay = ({
   );
 };
 
-export default function ArticleSummaryPage() {
+// Rename original component
+function ArticleSummaryPageContent() { 
   const router = useRouter();
   const searchParams = useSearchParams();
   // Add a timestamp to force re-rendering
@@ -2293,5 +2294,14 @@ export default function ArticleSummaryPage() {
         )}
       </div>
     </div>
+  );
+}
+
+// --- Wrapper Component with Suspense ---
+export default function ArticleSummaryPage() {
+  return (
+    <Suspense fallback={<div>Loading search parameters...</div>}>
+      <ArticleSummaryPageContent />
+    </Suspense>
   );
 } 
