@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -123,7 +123,9 @@ const LockedFeature = ({ title, description }: { title: string, description: str
   );
 };
 
-export default function ArticlePreviewPage() {
+export const dynamic = 'force-dynamic'; // Force dynamic rendering
+
+function PreviewContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const urlParam = searchParams.get('url')
@@ -477,4 +479,12 @@ export default function ArticlePreviewPage() {
       </footer>
     </div>
   )
+}
+
+export default function PreviewPage() {
+  return (
+    <Suspense fallback={<div>Loading preview...</div>}>
+      <PreviewContent />
+    </Suspense>
+  );
 } 
