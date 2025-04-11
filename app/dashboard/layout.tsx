@@ -47,7 +47,7 @@ export default function DashboardLayout({
         {/* Main Content - Use responsive margin classes */}
         <div
           className={cn(
-            "main-content flex-grow overflow-y-auto bg-gray-50 transition-all duration-300",
+            "main-content flex-grow overflow-y-auto bg-gray-50",
             // Apply margin only on medium screens and up based on sidebar state
             sidebarExpanded ? "md:ml-64" : "md:ml-20",
             // Default margin for mobile is 0

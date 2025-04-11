@@ -392,7 +392,7 @@ function ArticleSummaryPageContent() {
               }
               // Use optional chaining for safety
               const related = data.articleSummary.related_research;
-              setRelatedResearch({
+                setRelatedResearch({
                 supporting: related?.supporting || [],
                 contradictory: related?.contradictory || [],
                 neutral: related?.neutral || [],
@@ -410,7 +410,7 @@ function ArticleSummaryPageContent() {
              // Only fetch summary if it's a 'not found' error, otherwise show DB error
              if (error.message.includes('Article not found')) {
                 console.log("Article not in DB, fetching from source:", articleUrl);
-                fetchSummaryWithOverlay(articleUrl); // Fetch if not in DB
+             fetchSummaryWithOverlay(articleUrl); // Fetch if not in DB
              } else {
                  console.error("Error checking database:", error);
                  setError(`Error checking database: ${error.message}`);
@@ -531,7 +531,7 @@ function ArticleSummaryPageContent() {
 export default function ArticleSummaryPage() {
   return (
     <Suspense fallback={<div>Loading search parameters...</div>}>
-      <ArticleSummaryPageContent />
+      <ArticleSummaryPageContent /> 
     </Suspense>
   );
 } 
