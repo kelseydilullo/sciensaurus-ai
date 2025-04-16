@@ -7,8 +7,35 @@ import { UserAvatarDropdown } from "@/components/user-avatar-dropdown"
 import { AuthRedirect } from "@/components/auth-redirect"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { LucideSearch, LucideBell } from "lucide-react"
+import { LucideSearch, LucideBell, Menu } from "lucide-react"
 import { cn } from "@/lib/utils"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader
+} from "@/components/ui/sidebar"
+import {
+  LucideHome,
+  LucideSettings,
+  LucideHelpCircle,
+  LucideLogOut,
+  LucideBookOpen,
+  LucideUsers,
+  LucideCompass,
+} from "lucide-react"
+import Link from "next/link"
+import { useAuth } from "@/contexts/auth-context"
+import { usePathname, useRouter } from "next/navigation"
+import { SciensaurusLogo } from "@/components/sciensaurus-logo"
 
 export default function DashboardLayout({
   children,
@@ -18,13 +45,11 @@ export default function DashboardLayout({
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
 
   useEffect(() => {
-    // Check saved sidebar preference on mount
     const savedState = localStorage.getItem("sidebarExpanded");
     if (savedState !== null) {
       setSidebarExpanded(savedState === "true");
     }
     
-    // Listen for changes to sidebar state
     const handleStorageChange = () => {
       const state = localStorage.getItem("sidebarExpanded");
       if (state !== null) {
@@ -33,37 +58,90 @@ export default function DashboardLayout({
     };
     
     window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
   }, []);
 
   return (
-    <SidebarProvider>
-      <div className="flex h-screen">
-        {/* Sidebar - fixed position, always visible */}
-        <div className="fixed left-0 top-0 h-full z-20">
-          <DashboardSidebar />
+    <SidebarProvider> 
+      <div className="flex h-screen overflow-hidden">
+        {/* Desktop Sidebar (Hidden on mobile) */}
+        <div className="hidden md:block">
+          <DashboardSidebar expanded={sidebarExpanded} onToggle={() => {
+            const newState = !sidebarExpanded;
+            setSidebarExpanded(newState);
+            localStorage.setItem("sidebarExpanded", String(newState));
+            window.dispatchEvent(new Event('storage'));
+          }} />
         </div>
 
-        {/* Main Content - Use responsive margin classes */}
+        {/* Main Content */}
         <div
           className={cn(
-            "main-content flex-grow overflow-y-auto bg-gray-50",
-            // Apply margin only on medium screens and up based on sidebar state
-            sidebarExpanded ? "md:ml-64" : "md:ml-20",
-            // Default margin for mobile is 0
-            "ml-0"
+            "main-content flex-grow overflow-y-auto bg-gray-50 w-full",
+            sidebarExpanded ? "md:ml-64" : "md:ml-20"
           )}
         >
           {/* Header */}
           <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-            <div className="px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="relative max-w-md w-full hidden md:block">
+            <div className="px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4">
+              {/* Mobile Menu Button using Sheet */}
+              <div className="md:hidden">
+                <Sheet>
+                  <SheetTrigger asChild>
+                    <Button variant="ghost" size="icon">
+                      <Menu className="h-6 w-6" />
+                      <span className="sr-only">Open menu</span>
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="left" className="p-0 w-64 flex flex-col bg-background">
+                    {/* Add bg-white to Header, restore for Content/Footer */}
+                    <SheetHeader className="p-4 border-b flex-shrink-0 bg-white">
+                      <SheetTitle className="sr-only">Main Menu</SheetTitle>
+                    </SheetHeader>
+                    
+                    <div className="flex-grow overflow-y-auto p-4 space-y-6 bg-white">
+                      {/* Main Menu Section */}
+                      <div>
+                        <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wider pl-2 mb-2">Main Menu</h3>
+                        <nav className="space-y-1">
+                          <MobileMenuItem href="/dashboard" icon={LucideHome} label="Dashboard" />
+                        </nav>
+                      </div>
+                      {/* Demo Section */}
+                      <div>
+                        <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wider pl-2 mb-2">Demo</h3>
+                        <nav className="space-y-1">
+                          <MobileMenuItem href="/dashboard/research-interests" icon={LucideCompass} label="My Research Interests" />
+                          <MobileMenuItem href="/dashboard/demo-doctor" icon={LucideUsers} label="Doctor View" />
+                          <MobileMenuItem href="/dashboard/demo-patient" icon={LucideBookOpen} label="Patient View" />
+                        </nav>
+                      </div>
+                    </div>
+
+                    <div className="p-4 border-t mt-auto flex-shrink-0 bg-white">
+                      <nav className="space-y-1">
+                         <MobileMenuItem href="/dashboard/settings" icon={LucideSettings} label="Settings" />
+                         <MobileMenuItem href="/dashboard/help" icon={LucideHelpCircle} label="Help" />
+                         <MobileLogoutButton /> 
+                      </nav>
+                    </div>
+                  </SheetContent>
+                </Sheet>
+              </div>
+
+              {/* Search (Desktop only) */}
+              <div className="flex-grow hidden md:block">
+                <div className="relative max-w-md">
                   <Input type="search" placeholder="Search..." className="pl-10 pr-4 py-2 w-full" />
                   <LucideSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
                 </div>
               </div>
-              <div className="flex items-center gap-4">
+
+              {/* Right-side icons */}
+              <div className="flex items-center gap-2">
                 <Button variant="ghost" size="icon" className="text-gray-500">
                   <LucideBell className="h-5 w-5" />
                 </Button>
@@ -80,4 +158,60 @@ export default function DashboardLayout({
       </div>
     </SidebarProvider>
   )
+}
+
+// Helper component for Mobile Menu Items
+function MobileMenuItem({ href, icon: Icon, label }: { href: string; icon: React.ElementType; label: string }) {
+  const pathname = usePathname();
+  const isActive = pathname === href;
+  return (
+    <Link href={href} className="block transition-colors duration-200">
+      <div className={`flex items-center py-2 px-2 rounded-md ${isActive ? 'bg-blue-50' : 'hover:bg-blue-50'}`}>
+        <div className={isActive ? "text-[#1e3a6d]" : "text-gray-500"}>
+          <Icon className="h-5 w-5 min-w-5" />
+        </div>
+        <span className={`ml-3 ${isActive ? "font-medium text-[#1e3a6d]" : "text-gray-700"}`}>{label}</span>
+      </div>
+    </Link>
+  );
+}
+
+// Helper component for Mobile Logout Button
+function MobileLogoutButton() {
+  const { signOut } = useAuth();
+  const router = useRouter();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      const { error } = await signOut();
+      if (error) {
+        console.error("Logout error:", error);
+        setIsLoggingOut(false);
+      } else {
+        router.push('/'); // Redirect after logout
+      }
+    } catch (err) {
+      console.error("Logout exception:", err);
+      setIsLoggingOut(false);
+    }
+  };
+
+  return (
+    <button
+      className="w-full transition-colors duration-200 text-left"
+      onClick={handleLogout}
+      disabled={isLoggingOut}
+    >
+      <div className="flex items-center py-2 px-2 rounded-md hover:bg-red-50">
+        <div className="text-red-500">
+          <LucideLogOut className="h-5 w-5 min-w-5" />
+        </div>
+        <span className="ml-3 text-red-600">
+          {isLoggingOut ? "Logging out..." : "Logout"}
+        </span>
+      </div>
+    </button>
+  );
 } 
