@@ -1,7 +1,8 @@
 "use client"
 
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/auth-context';
 import {
   DropdownMenu,
@@ -14,6 +15,8 @@ import {
 
 export function UserAvatarDropdown() {
   const { user, signOut } = useAuth();
+  const router = useRouter();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   
   const userEmail = user?.email || 'kelsey@sciensaurus.com';
   const initials = userEmail
@@ -24,6 +27,12 @@ export function UserAvatarDropdown() {
         .join('')
         .substring(0, 2)
     : 'K';  // Default to K for demo
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    await signOut();
+    router.push('/');
+  };
 
   return (
     <DropdownMenu>
@@ -44,20 +53,21 @@ export function UserAvatarDropdown() {
         <DropdownMenuSeparator className="bg-gray-200" />
         
         <div className="py-1">
-          <Link href="/dashboard/profile" className="block w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+          {/* <Link href="/dashboard/profile" className="block w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
             Profile
-          </Link>
-          <Link href="/dashboard/settings" className="block w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+          </Link> */}
+          {/* <Link href="/dashboard/settings" className="block w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
             Settings
-          </Link>
+          </Link> */}
         </div>
         
         <DropdownMenuSeparator className="bg-gray-200" />
         <button 
           className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer"
-          onClick={() => signOut()}
+          onClick={handleLogout}
+          disabled={isLoggingOut}
         >
-          Sign out
+          {isLoggingOut ? "Logging out..." : "Logout"}
         </button>
       </DropdownMenuContent>
     </DropdownMenu>

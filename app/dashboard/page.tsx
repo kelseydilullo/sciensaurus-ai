@@ -796,9 +796,9 @@ export default function DashboardPage() {
         // Add w-full to ensure it takes available width
         <div className="w-full flex-1 space-y-4 px-2 pt-6 pb-4 md:px-8 md:pt-8 md:pb-8">
           {/* Header with title and analyze form */}
-          <div className="flex flex-col md:flex-row items-start justify-between space-y-2">
+          <div className="flex flex-col space-y-2 mb-6">
             <h2 className="text-3xl font-bold tracking-tight text-gray-900">Dashboard</h2>
-            <p className="text-gray-600">Hi {dashboardStats.user.firstName || firstName}. Here's your ***research*** overview.</p>
+            <p className="text-gray-600">Hi {dashboardStats.user.firstName || firstName}. Here's your research overview.</p>
           </div>
 
           {/* Research Activity Summary */}
@@ -842,22 +842,24 @@ export default function DashboardPage() {
             </Card>
 
             {/* Saved Articles */}
-            <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="pb-2">
-                <p className="text-sm font-medium text-gray-700">Saved Articles</p>
+            {/* <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  Saved Articles
+                  <LucideBookmark className="h-5 w-5 text-gray-400" />
+                </CardTitle>
               </CardHeader>
-              <CardContent className="pt-0">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-3xl font-bold text-gray-900">{dashboardStats.articlesAnalyzed.savedCount}</h3>
-                  <div className="h-10 w-10 rounded-full flex items-center justify-center bg-green-100">
-                    <LucideBookmark className="h-5 w-5 text-green-600" />
-                  </div>
-                </div>
-                <div className="mt-2 text-xs text-gray-500 flex items-center">
-                  <LucideClock className="h-3 w-3 mr-1" />
-                  <span>Last saved {dashboardStats.lastSavedDaysAgo} days ago</span>
-                </div>
+              <CardContent>
+                <p className="text-2xl font-bold">{dashboardStats.articlesAnalyzed.savedCount}</p>
+                <p className="text-xs text-gray-500">
+                  Last saved {dashboardStats.lastSavedDaysAgo} days ago
+                </p>
               </CardContent>
+            </Card> */}
+
+            {/* Research Interests Widget - Placeholder */}
+            <Card>
+              {/* ... existing code ... */}
             </Card>
           </div>
 

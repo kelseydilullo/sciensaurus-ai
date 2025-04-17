@@ -43,6 +43,8 @@ export default function DashboardLayout({
   children: React.ReactNode
 }) {
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
+  // State for mobile menu sheet
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const savedState = localStorage.getItem("sidebarExpanded");
@@ -89,42 +91,43 @@ export default function DashboardLayout({
             <div className="px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4">
               {/* Mobile Menu Button using Sheet */}
               <div className="md:hidden">
-                <Sheet>
+                <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
                   <SheetTrigger asChild>
                     <Button variant="ghost" size="icon">
                       <Menu className="h-6 w-6" />
                       <span className="sr-only">Open menu</span>
                     </Button>
                   </SheetTrigger>
-                  <SheetContent side="left" className="p-0 w-64 flex flex-col bg-background">
-                    {/* Add bg-white to Header, restore for Content/Footer */}
-                    <SheetHeader className="p-4 border-b flex-shrink-0 bg-white">
+                  <SheetContent side="left" className="p-0 w-64 flex flex-col bg-white">
+                    <SheetHeader className="p-4 border-b border-gray-100 flex-shrink-0">
                       <SheetTitle className="sr-only">Main Menu</SheetTitle>
                     </SheetHeader>
                     
-                    <div className="flex-grow overflow-y-auto p-4 space-y-6 bg-white">
+                    <div className="flex-grow overflow-y-auto p-4 space-y-6">
                       {/* Main Menu Section */}
                       <div>
                         <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wider pl-2 mb-2">Main Menu</h3>
                         <nav className="space-y-1">
-                          <MobileMenuItem href="/dashboard" icon={LucideHome} label="Dashboard" />
+                          <MobileMenuItem href="/dashboard" icon={LucideHome} label="Dashboard" onClick={() => setIsMobileMenuOpen(false)} />
                         </nav>
                       </div>
                       {/* Demo Section */}
                       <div>
                         <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wider pl-2 mb-2">Demo</h3>
                         <nav className="space-y-1">
-                          <MobileMenuItem href="/dashboard/research-interests" icon={LucideCompass} label="My Research Interests" />
-                          <MobileMenuItem href="/dashboard/demo-doctor" icon={LucideUsers} label="Doctor View" />
-                          <MobileMenuItem href="/dashboard/demo-patient" icon={LucideBookOpen} label="Patient View" />
+                          <MobileMenuItem href="/dashboard/research-interests" icon={LucideCompass} label="My Research Interests" onClick={() => setIsMobileMenuOpen(false)} />
+                          <MobileMenuItem href="/dashboard/demo-doctor" icon={LucideUsers} label="Doctor View" onClick={() => setIsMobileMenuOpen(false)} />
+                          <MobileMenuItem href="/dashboard/demo-patient" icon={LucideBookOpen} label="Patient View" onClick={() => setIsMobileMenuOpen(false)} />
                         </nav>
                       </div>
                     </div>
 
-                    <div className="p-4 border-t mt-auto flex-shrink-0 bg-white">
+                    <div className="p-4 border-t border-gray-100 mt-auto flex-shrink-0">
                       <nav className="space-y-1">
-                         <MobileMenuItem href="/dashboard/settings" icon={LucideSettings} label="Settings" />
-                         <MobileMenuItem href="/dashboard/help" icon={LucideHelpCircle} label="Help" />
+                         {/* Comment out Settings until page exists */}
+                         {/* <MobileMenuItem href="/dashboard/settings" icon={LucideSettings} label="Settings" onClick={() => setIsMobileMenuOpen(false)} /> */}
+                         {/* Comment out Help until page exists */}
+                         {/* <MobileMenuItem href="/dashboard/help" icon={LucideHelpCircle} label="Help" onClick={() => setIsMobileMenuOpen(false)} /> */}
                          <MobileLogoutButton /> 
                       </nav>
                     </div>
@@ -142,9 +145,9 @@ export default function DashboardLayout({
 
               {/* Right-side icons */}
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" className="text-gray-500">
+                {/* <Button variant="ghost" size="icon" className="text-gray-500">
                   <LucideBell className="h-5 w-5" />
-                </Button>
+                </Button> */}
                 <UserAvatarDropdown />
               </div>
             </div>
@@ -161,11 +164,11 @@ export default function DashboardLayout({
 }
 
 // Helper component for Mobile Menu Items
-function MobileMenuItem({ href, icon: Icon, label }: { href: string; icon: React.ElementType; label: string }) {
+function MobileMenuItem({ href, icon: Icon, label, onClick }: { href: string; icon: React.ElementType; label: string; onClick?: () => void }) {
   const pathname = usePathname();
   const isActive = pathname === href;
   return (
-    <Link href={href} className="block transition-colors duration-200">
+    <Link href={href} className="block transition-colors duration-200" onClick={onClick}>
       <div className={`flex items-center py-2 px-2 rounded-md ${isActive ? 'bg-blue-50' : 'hover:bg-blue-50'}`}>
         <div className={isActive ? "text-[#1e3a6d]" : "text-gray-500"}>
           <Icon className="h-5 w-5 min-w-5" />
