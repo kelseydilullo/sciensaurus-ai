@@ -80,7 +80,7 @@ export default function DashboardLayout({
         {/* Main Content */}
         <div
           className={cn(
-            "main-content flex-grow overflow-y-auto bg-gray-50 w-full",
+            "main-content flex-grow overflow-y-auto bg-gray-50 w-full ml-0",
             sidebarExpanded ? "md:ml-64" : "md:ml-20"
           )}
         >
