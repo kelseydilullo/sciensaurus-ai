@@ -798,7 +798,7 @@ export default function DashboardPage() {
           {/* Header with title and analyze form */}
           <div className="flex flex-col md:flex-row items-start justify-between space-y-2">
             <h2 className="text-3xl font-bold tracking-tight text-gray-900">Dashboard</h2>
-            <p className="text-gray-600">Hi {dashboardStats.user.firstName || firstName}. Here's your research overview.</p>
+            <p className="text-gray-600">Hi {dashboardStats.user.firstName || firstName}. Here's your ***research*** overview.</p>
           </div>
 
           {/* Research Activity Summary */}
