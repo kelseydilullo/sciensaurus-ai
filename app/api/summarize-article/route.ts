@@ -935,47 +935,40 @@ export async function POST(req: Request) {
             // Map the response to our database schema according to the specified mapping
             const dataToStore = {
               url,
-              // Map "Original Article Title" or fallback to "Summarized Title"
               title: parsedResponse.originalArticleTitle || parsedResponse.title || "",
-              // Store the AI-generated summarized title
               summarized_title: parsedResponse.summarizedTitle || "",
               source: getSourceFromUrl(url),
-              publish_date: null, // Will be set later if available
-              // Use the visual summary points joined as the summary
+              publish_date: null, 
               summary: parsedResponse.visualSummary?.map((item: any) => item.point).join(' ') || "",
-              // Store the full visual summary array with emoji and points
               visual_summary: parsedResponse.visualSummary || [],
-              // Store keywords
               keywords: parsedResponse.keywords || [],
-              // Map cohort analysis to study metadata
+              // Keep study_metadata minimal for now
               study_metadata: {
                 studyType: parsedResponse.cohortAnalysis?.typeOfStudy || parsedResponse.cohortAnalysis?.studyType || "",
                 cohortSize: parsedResponse.cohortAnalysis?.cohortSize || 0,
-                ageDistribution: parsedResponse.cohortAnalysis?.ageDistribution || "",
-                geographicDistribution: parsedResponse.cohortAnalysis?.geographicDistribution || "",
                 notes: parsedResponse.cohortAnalysis?.notes || []
+                // Consider adding duration, dateRange if needed later
               },
-              // Initialize related research (will be populated by another API)
+              // Add top-level demographic fields matching DB columns
+              age_demographics: { 
+                distribution_raw: parsedResponse.cohortAnalysis?.ageDistribution 
+                // TODO: Could add parsed ranges here if needed
+              },
+              gender_demographics: { 
+                male: parsedResponse.cohortAnalysis?.gender?.male,
+                female: parsedResponse.cohortAnalysis?.gender?.female,
+                other: parsedResponse.cohortAnalysis?.gender?.other,
+                // Keep geo separate or nest if needed by frontend
+                geographicDistribution: parsedResponse.cohortAnalysis?.geographicDistribution
+              },
               related_research: {
                 supporting: [],
                 contradictory: [],
                 totalFound: 0,
                 searchKeywords: parsedResponse.keywords || []
               },
-              // Store the raw article content for reference
-              raw_content: articleData.content // articleData should still be in scope here
+              raw_content: articleData.content 
             };
-            
-            console.log("Prepared data to store:", {
-              url: dataToStore.url,
-              title: dataToStore.title,
-              summarizedTitle: dataToStore.summarized_title,
-              source: dataToStore.source,
-              summaryLength: dataToStore.summary.length,
-              keywordsCount: (dataToStore.keywords || []).length,
-              visualSummaryCount: (dataToStore.visual_summary || []).length,
-              hasStudyMetadata: !!dataToStore.study_metadata
-            });
             
             // Make internal API call to store the article
             const storeResponse = await fetch(new URL('/api/store-article-summary', req.url).toString(), {

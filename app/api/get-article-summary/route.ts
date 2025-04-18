@@ -59,7 +59,25 @@ export async function GET(request: NextRequest) {
     // Fetch the article summary from the database
     const { data: article, error } = await adminClient
       .from('article_summaries')
-      .select('*')
+      // Explicitly select all required fields, including new demographics
+      .select(`
+        id,
+        url,
+        title,
+        summarized_title,
+        source,
+        publish_date,
+        summary,
+        visual_summary,
+        keywords,
+        study_metadata,
+        related_research,
+        raw_content,
+        created_at,
+        updated_at,
+        age_demographics, 
+        gender_demographics 
+      `)
       .eq('id', articleId)
       .single();
       

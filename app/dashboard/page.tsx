@@ -343,9 +343,21 @@ export default function DashboardPage() {
         throw new Error(`Failed to fetch article summary: ${response.statusText}`);
       }
       
-      const data = await response.json();
+      // *** Log raw response text BEFORE parsing JSON ***
+      const rawText = await response.text();
+      console.log("--- Raw Response Text from /api/get-article-summary ---");
+      console.log(rawText.substring(0, 1000)); // Log first 1000 chars
+      console.log("-------------------------------------------------------");
+      
+      // Parse the raw text
+      const data = JSON.parse(rawText);
       
       if (data.success) {
+        // Log the parsed object (as before)
+        console.log("--- Received article data in handleViewArticleSummary ---");
+        console.log(JSON.stringify(data.article, null, 2));
+        console.log("----------------------------------------------------");
+
         // Log the structure of the article data
         console.log("Article data received:", {
           id: data.article.id,

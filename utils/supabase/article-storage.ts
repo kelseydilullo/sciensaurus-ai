@@ -22,6 +22,8 @@ export interface ArticleSummary {
   raw_content?: string;
   created_at?: string;
   updated_at?: string;
+  age_demographics?: any;
+  gender_demographics?: any;
 }
 
 export interface UserArticle {
@@ -84,6 +86,8 @@ export async function storeArticleSummary(articleSummary: ArticleSummary): Promi
           study_metadata: articleSummary.study_metadata,
           related_research: articleSummary.related_research,
           raw_content: articleSummary.raw_content,
+          age_demographics: articleSummary.age_demographics,
+          gender_demographics: articleSummary.gender_demographics,
           updated_at: new Date().toISOString()
         })
         .eq('id', existingArticles[0].id)
@@ -112,7 +116,9 @@ export async function storeArticleSummary(articleSummary: ArticleSummary): Promi
           keywords: articleSummary.keywords,
           study_metadata: articleSummary.study_metadata,
           related_research: articleSummary.related_research,
-          raw_content: articleSummary.raw_content
+          raw_content: articleSummary.raw_content,
+          age_demographics: articleSummary.age_demographics,
+          gender_demographics: articleSummary.gender_demographics
         })
         .select()
         .single();
@@ -585,7 +591,16 @@ export async function getDashboardStats(
     
     // Process results from parallel queries
     const { count: totalArticles, error: countError } = countResult;
-    const { data: recentArticles, error: articlesError } = recentArticlesResult;
+    const { data: recentArticlesData, error: articlesError } = recentArticlesResult as { 
+      data: Array<{
+        id?: string;
+        is_bookmarked?: boolean;
+        view_count?: number;
+        last_viewed_at?: string;
+        article_summary: ArticleSummary | null; // Type for the joined data
+      }> | null, 
+      error: any 
+    };
     const { count: savedArticles, error: savedError } = savedArticlesResult;
     const { data: lastSaved, error: lastSavedError } = lastSavedResult;
     
@@ -608,10 +623,10 @@ export async function getDashboardStats(
         details: articlesError.details
       };
     } else {
-      console.log(`Retrieved ${recentArticles?.length || 0} recent articles`);
+      console.log(`Retrieved ${recentArticlesData?.length || 0} recent articles`);
       // Log IDs of recent articles for debugging
-      if (recentArticles && recentArticles.length > 0) {
-        debugInfo.recentArticleIds = recentArticles.map((item: any) => ({
+      if (recentArticlesData && recentArticlesData.length > 0) {
+        debugInfo.recentArticleIds = recentArticlesData.map((item: any) => ({
           id: item.id,
           article_id: item.article_summary?.id,
           has_summary: !!item.article_summary
@@ -637,33 +652,45 @@ export async function getDashboardStats(
       };
     }
     
+    // Define the expected final shape for each recent article
+    type FormattedRecentArticle = ArticleSummary & { 
+      is_bookmarked?: boolean; 
+      view_count?: number 
+    };
+
     // Format recent articles for display
-    const formattedRecentArticles = recentArticles?.map((item: {
-      id?: string;
-      is_bookmarked?: boolean;
-      view_count?: number;
-      last_viewed_at?: string;
-      article_summary?: ArticleSummary;
-    }) => {
-      // Add safety check for missing article_summary
-      if (!item.article_summary) {
-        console.warn(`Missing article_summary for users_articles record ${item.id}`);
-        return null;
-      }
-      
-      return {
-        ...item.article_summary,
-        is_bookmarked: item.is_bookmarked,
-        view_count: item.view_count
-      };
-    }).filter(Boolean) || [];
+    const formattedRecentArticles: FormattedRecentArticle[] = 
+      (recentArticlesData || []) // Default to empty array if null
+        .map(item => { // Let TS infer item type based on the cast above
+          if (!item || !item.article_summary) {
+            // If the item or the nested summary is null/undefined, skip it
+            console.warn(`Skipping recent article due to missing data: ${item?.id}`);
+            return null;
+          }
+          
+          // Construct the final object matching FormattedRecentArticle type
+          const formattedArticle: FormattedRecentArticle = {
+            // Spread all fields from the joined article_summary
+            ...item.article_summary,
+            // Add/overwrite with user-specific fields from the join table
+            is_bookmarked: item.is_bookmarked,
+            view_count: item.view_count,
+            // Ensure required fields are present (even though spread should cover them)
+            id: item.article_summary.id, 
+            url: item.article_summary.url,
+            title: item.article_summary.title,
+          };
+          return formattedArticle;
+        })
+        // Filter out any null results from the map (where article_summary was missing)
+        .filter((article): article is FormattedRecentArticle => article !== null);
     
     // Add debug logging to see what's happening with the recent articles
-    console.log(`Found ${recentArticles?.length || 0} total user articles, formatted ${formattedRecentArticles.length} valid articles`);
-    if (recentArticles?.length > 0 && formattedRecentArticles.length === 0) {
+    console.log(`Found ${recentArticlesData?.length || 0} total user articles rows, formatted ${formattedRecentArticles.length} valid recent articles`); // Use recentArticlesData for raw count
+    if (recentArticlesData && recentArticlesData.length > 0 && formattedRecentArticles.length === 0) {
       console.warn('All recent articles had null article_summary references - check foreign key constraints');
       // Log the raw data for debugging
-      console.log('Raw recent articles data:', JSON.stringify(recentArticles.map((item: any) => ({
+      console.log('Raw recent articles data:', JSON.stringify(recentArticlesData.map((item: any) => ({
         id: item.id,
         has_summary: !!item.article_summary,
         article_id: item.article_summary?.id

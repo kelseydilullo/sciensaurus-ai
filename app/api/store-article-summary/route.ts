@@ -75,6 +75,8 @@ export async function POST(request: NextRequest) {
       visual_summary,
       keywords,
       study_metadata,
+      age_demographics,
+      gender_demographics,
       related_research,
       raw_content
     } = requestBody;
@@ -163,6 +165,8 @@ export async function POST(request: NextRequest) {
         visual_summary: visual_summary,
         keywords,
         study_metadata: study_metadata,
+        age_demographics: age_demographics,
+        gender_demographics: gender_demographics,
         related_research: related_research,
         raw_content: raw_content,
         updated_at: new Date().toISOString()
@@ -177,6 +181,8 @@ export async function POST(request: NextRequest) {
         hasVisualSummary: !!updateData.visual_summary,
         hasKeywords: !!updateData.keywords,
         hasStudyMetadata: !!updateData.study_metadata,
+        hasAgeDemographics: !!updateData.age_demographics,
+        hasGenderDemographics: !!updateData.gender_demographics,
         hasRelatedResearch: !!updateData.related_research,
         hasRawContent: !!updateData.raw_content
       });
@@ -213,6 +219,8 @@ export async function POST(request: NextRequest) {
         visual_summary: visual_summary,
         keywords,
         study_metadata: study_metadata,
+        age_demographics: age_demographics,
+        gender_demographics: gender_demographics,
         related_research: related_research,
         raw_content: raw_content
       };
@@ -227,6 +235,8 @@ export async function POST(request: NextRequest) {
         hasVisualSummary: !!insertData.visual_summary,
         hasKeywords: !!insertData.keywords,
         hasStudyMetadata: !!insertData.study_metadata,
+        hasAgeDemographics: !!insertData.age_demographics,
+        hasGenderDemographics: !!insertData.gender_demographics,
         hasRelatedResearch: !!insertData.related_research,
         hasRawContent: !!insertData.raw_content
       });

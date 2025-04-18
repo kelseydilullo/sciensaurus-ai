@@ -672,7 +672,7 @@ export default function ArticleSummaryContent({
   };
   
   // Methodology wrapper component to encapsulate and isolate methodology rendering
-  const MethodologySection = () => {
+  const MethodologySection = ({ data }: { data: any }) => {
     // Extra debugging - Log the raw data to see what we're receiving
     useEffect(() => {
       console.log("PARSING RAW ARTICLE DATA:");
@@ -693,8 +693,8 @@ export default function ArticleSummaryContent({
     }, [articleData]);
 
     // Extract relevant data for both preview and authenticated modes
-    const methodologyData = (result && result.cohortAnalysis) || 
-                           (result && result.study_metadata) || 
+    const methodologyData = (data && data.cohortAnalysis) || 
+                           (data && data.study_metadata) || 
                            (articleData && articleData.study_metadata) || {};
     
     // Ensure methodologyData is an object
@@ -764,53 +764,19 @@ export default function ArticleSummaryContent({
     };
 
     // Get structured age data if available, otherwise try to extract from text
-    const ageDistributionText = methodologyDataObj.ageDistribution || '';
+    const ageDistributionText = data?.age_demographics?.distribution_raw || '';
     const extractedAgeData = extractAgeDataFromText(ageDistributionText);
     
-    // Update the hasAgeData check to include extracted data
-    const hasAgeData = (methodologyDataObj.demographics?.age && 
-                      Array.isArray(methodologyDataObj.demographics.age) && 
-                      methodologyDataObj.demographics.age.length > 0) ||
-                      (extractedAgeData !== null);
-
-    // Determine the final age data to use
-    const ageDataForChart = methodologyDataObj.demographics?.age && 
-                          Array.isArray(methodologyDataObj.demographics.age) && 
-                          methodologyDataObj.demographics.age.length > 0 
-                          ? methodologyDataObj.demographics.age 
-                          : extractedAgeData;
-
-    // Prepare gender data for pie chart if available 
-    // Check directly under methodologyDataObj.gender first, then demographics.gender as fallback
-    const genderSource = methodologyDataObj?.gender || methodologyDataObj?.demographics?.gender;
-    const genderData = genderSource && (genderSource.male > 0 || genderSource.female > 0) 
-                      ? [
-                        { name: 'Male', value: genderSource.male, color: '#4299E1' },
-                        { name: 'Female', value: genderSource.female, color: '#ED64A6' }
-                      ] 
-                      : [];
-    
-    // DEBUG: Log the prepared genderData array
-    console.log("[MethodologySection] genderData for chart:", genderData);
-
-    // Add 'Other' category if present in methodologyDataObj
-    if (methodologyDataObj.demographics?.gender && methodologyDataObj.demographics.gender.other > 0) {
-      genderData.push({ 
-        name: 'Other', 
-        value: methodologyDataObj.demographics.gender.other,
-        color: '#9F7AEA'
-      });
-    }
-
     // Render Bar Chart for Age Demographics
     const renderAgeChart = () => {
-      if (!hasAgeData) return null;
+      // Use extractedAgeData directly for the check and the data prop
+      if (!extractedAgeData) return null;
 
       return (
         <div className="mt-3 mb-2">
           <ResponsiveContainer width="100%" height={200}>
             <BarChart
-              data={ageDataForChart}
+              data={extractedAgeData}
               margin={{ top: 10, right: 10, left: 0, bottom: 25 }}
             >
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -840,6 +806,23 @@ export default function ArticleSummaryContent({
         </div>
       );
     };
+
+    // Prepare gender data for pie chart if available 
+    // Check directly under methodologyDataObj.gender first, then demographics.gender as fallback
+    const genderSource = methodologyDataObj?.gender || methodologyDataObj?.demographics?.gender;
+    const genderData = useMemo(() => {
+      // Access gender_demographics directly from the top-level parsedData/articleData
+      const gender = data?.gender_demographics; 
+      const dataArray = [];
+      // Check if gender object exists and has valid properties
+      if (gender && (typeof gender.male === 'number' || typeof gender.female === 'number' || typeof gender.other === 'number')) {
+        if (gender.male != null && gender.male > 0) dataArray.push({ name: 'Male', value: gender.male, color: '#4299E1' });
+        if (gender.female != null && gender.female > 0) dataArray.push({ name: 'Female', value: gender.female, color: '#ED64A6' });
+        if (gender.other != null && gender.other > 0) dataArray.push({ name: 'Other', value: gender.other, color: '#9F7AEA' });
+      }
+      // Return data only if there are entries (value > 0 check is now inside)
+      return dataArray;
+    }, [data?.gender_demographics]); // Depend on the correct field
 
     // Render Pie Chart for Gender Demographics
     const renderGenderChart = () => {
@@ -918,8 +901,13 @@ export default function ArticleSummaryContent({
                 {/* Age Demographics */}
                 <div className="bg-green-50 p-5 rounded-lg border border-green-100">
                   <h4 className="text-green-800 font-medium mb-2">Age Demographics</h4>
-                  {hasAgeData ? renderAgeChart() : (
-                    <p className="text-gray-700">{methodologyDataObj.ageDistribution || "Not available"}</p>
+                  {/* Updated rendering logic: prioritize chart, then text, then fallback */}
+                  {extractedAgeData ? (
+                    renderAgeChart() // Render chart if parsing succeeded
+                  ) : ageDistributionText ? (
+                    <p className="text-gray-700">{ageDistributionText}</p> // Show raw text if available
+                  ) : (
+                    <p className="text-gray-700">{"Not available"}</p> // Fallback
                   )}
                 </div>
                 
@@ -1001,10 +989,13 @@ export default function ArticleSummaryContent({
             {/* Age Demographics with Chart */}
             <div className="bg-green-50 p-5 rounded-lg border border-green-100">
               <h4 className="text-green-800 font-medium mb-2">Age Demographics</h4>
-              {hasAgeData ? renderAgeChart() : (
-                <p className="text-gray-700">
-                  {methodologyDataObj.ageDistribution || "Not available"}
-                </p>
+              {/* Updated rendering logic: prioritize chart, then text, then fallback */}
+              {extractedAgeData ? (
+                renderAgeChart() // Render chart if parsing succeeded
+              ) : ageDistributionText ? (
+                <p className="text-gray-700">{ageDistributionText}</p> // Show raw text if available
+              ) : (
+                <p className="text-gray-700">{"Not available"}</p> // Fallback
               )}
             </div>
             
@@ -1228,7 +1219,7 @@ export default function ArticleSummaryContent({
       </div>
 
       {/* Methodology - Using wrapper component to isolate and prevent stray outputs */}
-      <MethodologySection />
+      <MethodologySection data={result} />
 
       {/* Related Research - Conditional structure for preview */}
       {isPreview ? (
