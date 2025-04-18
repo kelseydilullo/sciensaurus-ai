@@ -16,6 +16,8 @@ import {
   LucideClock,
   LucideCompass,
   CheckCircle2,
+  LucideTag,
+  LucideTrash2,
 } from "lucide-react"
 import {
   DropdownMenu,
@@ -175,6 +177,12 @@ export default function DashboardPage() {
   const [loadingArticles, setLoadingArticles] = useState(true);
   const [articlesError, setArticlesError] = useState<string | null>(null);
   
+  // State for Keyword Stats
+  const [researchInterestCount, setResearchInterestCount] = useState<number | null>(null);
+  const [topKeyword, setTopKeyword] = useState<string | null>(null);
+  const [keywordStatsLoading, setKeywordStatsLoading] = useState(true);
+  const [keywordStatsError, setKeywordStatsError] = useState<string | null>(null);
+  
   // State for user's dashboard stats from the new API
   const [dashboardStats, setDashboardStats] = useState<{
     user: {
@@ -256,6 +264,30 @@ export default function DashboardPage() {
     }
   };
 
+  // Fetch Keyword Stats
+  const fetchKeywordStats = async () => {
+    setKeywordStatsLoading(true);
+    setKeywordStatsError(null);
+    try {
+      const response = await fetch('/api/get-user-keyword-stats');
+      if (!response.ok) {
+        throw new Error(`Failed to fetch keyword stats: ${response.statusText}`);
+      }
+      const data = await response.json();
+      if (data.success) {
+        setResearchInterestCount(data.stats.researchInterestCount);
+        setTopKeyword(data.stats.topKeyword);
+      } else {
+        throw new Error(data.error || 'Failed to fetch keyword statistics');
+      }
+    } catch (error) {
+      console.error('Error fetching keyword stats:', error);
+      setKeywordStatsError(error instanceof Error ? error.message : 'An error occurred');
+    } finally {
+      setKeywordStatsLoading(false);
+    }
+  };
+
   // Add a function to run article verification
   const runArticleVerification = async () => {
     try {
@@ -286,6 +318,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (user?.id) {
       fetchDashboardStats();
+      fetchKeywordStats();
     }
   }, [user?.id]);
 
@@ -726,6 +759,50 @@ export default function DashboardPage() {
     setUrl('');
   }, []); // Empty dependency array ensures this runs only once on mount
 
+  // Function to remove an article from history
+  const handleRemoveArticle = async (articleSummaryId: string) => {
+    try {
+      const response = await fetch('/api/remove-user-article', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ articleSummaryId }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to remove article');
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Remove the article from the local state
+        setUserArticles(prevArticles => prevArticles.filter(article => article.id !== articleSummaryId));
+        
+        // Decrement the Articles Analyzed count in the UI state
+        setDashboardStats(prevStats => ({
+          ...prevStats,
+          articlesAnalyzed: {
+            ...prevStats.articlesAnalyzed,
+            // Ensure count doesn't go below 0
+            count: Math.max(0, (prevStats.articlesAnalyzed?.count ?? 0) - 1) 
+          }
+        }));
+        
+        // Optionally show a success notification
+        setNotification({ show: true, message: 'Article removed from history.' });
+        setTimeout(() => setNotification(null), 3000); 
+      } else {
+        throw new Error(data.error || 'Failed to remove article');
+      }
+    } catch (error) {
+      console.error('Error removing article:', error);
+      setNotification({ show: true, message: `Error: ${error instanceof Error ? error.message : 'Could not remove article'}` });
+      setTimeout(() => setNotification(null), 3000);
+    }
+  };
+
   return (
     <>
       {/* Loading Overlay for analyzing new articles */}
@@ -829,37 +906,39 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent className="pt-0">
                 <div className="flex justify-between items-center">
-                  <h3 className="text-3xl font-bold text-gray-900">8</h3>
+                  <h3 className="text-3xl font-bold text-gray-900">
+                    {keywordStatsLoading ? '-' : (keywordStatsError ? '!' : researchInterestCount ?? 0)}
+                  </h3>
                   <div className="h-10 w-10 rounded-full flex items-center justify-center bg-purple-100">
                     <LucideCompass className="h-5 w-5 text-purple-600" />
                   </div>
                 </div>
                 <div className="mt-2 text-xs text-gray-500 flex items-center">
-                  <span className="text-green-500 font-medium">+3 </span>
-                  <span className="ml-1">new interests this month</span>
+                  {/* Placeholder text, update if needed */}
+                  {keywordStatsLoading ? 'Loading...' : keywordStatsError ? keywordStatsError : 'Distinct topics analyzed ≥ 2 times'}
                 </div>
               </CardContent>
             </Card>
 
-            {/* Saved Articles */}
-            {/* <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  Saved Articles
-                  <LucideBookmark className="h-5 w-5 text-gray-400" />
-                </CardTitle>
+            {/* Top Keyword Widget - Replaces Saved Articles placeholder */}
+            <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+              <CardHeader className="pb-2">
+                <p className="text-sm font-medium text-gray-700">Top Keyword</p>
               </CardHeader>
-              <CardContent>
-                <p className="text-2xl font-bold">{dashboardStats.articlesAnalyzed.savedCount}</p>
-                <p className="text-xs text-gray-500">
-                  Last saved {dashboardStats.lastSavedDaysAgo} days ago
-                </p>
+              <CardContent className="pt-0">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-xl font-bold text-gray-900 break-words">
+                    {keywordStatsLoading ? '-' : (keywordStatsError ? 'Error' : topKeyword || 'N/A')}
+                  </h3>
+                  {/* Use LucideTag or another relevant icon */}
+                  <div className="h-10 w-10 rounded-full flex items-center justify-center bg-orange-100">
+                    <LucideTag className="h-5 w-5 text-orange-600" /> { /* Added LucideTag */}
+                  </div>
+                </div>
+                <div className="mt-2 text-xs text-gray-500 flex items-center">
+                  {keywordStatsLoading ? 'Loading...' : keywordStatsError ? 'Could not load' : 'Most frequent keyword in your analyses'}
+                </div>
               </CardContent>
-            </Card> */}
-
-            {/* Research Interests Widget - Placeholder */}
-            <Card>
-              {/* ... existing code ... */}
             </Card>
           </div>
 
@@ -949,18 +1028,18 @@ export default function DashboardPage() {
                                 <span className="sr-only">More</span>
                               </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                              <DropdownMenuItem onClick={() => article.id && toggleBookmark(article.id)}>
-                                <LucideBookmark className="mr-2 h-4 w-4" />
-                                <span>{article.is_bookmarked ? 'Remove bookmark' : 'Save to collection'}</span>
-                              </DropdownMenuItem>
-                              <DropdownMenuItem>
+                            <DropdownMenuContent align="end" className="bg-white" onClick={(e) => e.stopPropagation()}>
+                              <DropdownMenuItem onClick={() => handleViewArticleSummary(article.id, article.url)} className="cursor-pointer">
                                 <LucideFileText className="mr-2 h-4 w-4" />
-                                <span>View full analysis</span>
+                                <span>View Full Analysis</span>
                               </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-red-600">
-                                <span>Remove from history</span>
+                              <DropdownMenuItem 
+                                onClick={() => article.id && handleRemoveArticle(article.id)}
+                                className="text-red-600 cursor-pointer"
+                                disabled={!article.id}
+                              >
+                                <LucideTrash2 className="mr-2 h-4 w-4" /> 
+                                <span>Remove From History</span>
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
