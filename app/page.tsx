@@ -361,7 +361,7 @@ export default function LandingPage() {
       <section className="bg-[#1e3a6d] text-white py-16 pb-8 md:py-20 md:pb-12">
         <div className="container mx-auto px-4 text-center">
           <h1 className="text-4xl md:text-6xl font-bold mb-6">Your AI-Powered Research Companion</h1>
-          <p className="text-xl md:text-2xl mb-10 max-w-3xl mx-auto">Scientific research summarized and demystified.</p>
+          <p className="text-xl md:text-2xl mb-10 max-w-3xl mx-auto">Scientific research - summarized and demystified.</p>
 
           {/* URL Input Box */}
           <div className="max-w-2xl mx-auto mb-10 relative landing-page-search">
