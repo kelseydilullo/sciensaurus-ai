@@ -41,14 +41,14 @@ const summarizedArticleSchema = z.object({
   })
 });
 
-// Re-added Helper to extract title from HTML
+// Helper to extract title from HTML
 function extractTitle(document: Document): string | null {
   const titleElement = document.querySelector('title');
   return titleElement ? titleElement.textContent?.trim() || null : null;
 }
 
-// Re-added Helper to extract readable content from HTML DOM
-function extractReadableContent(document: Document): string {
+// Helper to extract readable content from HTML DOM
+function extractReadableContent(document: Document, window: JSDOM["window"]): string {
   // Remove script, style, nav, header, footer, aside elements
   ['script', 'style', 'nav', 'header', 'footer', 'aside', 'noscript', '.advertisement', '.ad', '[class*="ad-"]', '[id*="ad-"]'].forEach(selector => {
     const elements = document.querySelectorAll(selector);
@@ -86,7 +86,7 @@ function extractReadableContent(document: Document): string {
       let maxTextLength = 0;
       elements.forEach(el => {
           const directTextLength = Array.from(el.childNodes)
-                                     .filter(node => node.nodeType === Node.TEXT_NODE)
+                                     .filter(node => node.nodeType === window.Node.TEXT_NODE)
                                      .map(node => node.textContent?.trim().length || 0)
                                      .reduce((a, b) => a + b, 0);
           if (directTextLength > maxTextLength) {
@@ -123,7 +123,7 @@ function extractReadableContent(document: Document): string {
 
   // Function to recursively extract text from acceptable nodes
   function extractTextNodes(element: Element) {
-    if (element.nodeType === Node.ELEMENT_NODE) {
+    if (element.nodeType === window.Node.ELEMENT_NODE) {
       // Check if tag is acceptable
       if (acceptableTags.includes(element.tagName)) {
         const text = element.textContent?.trim();
@@ -140,7 +140,7 @@ function extractReadableContent(document: Document): string {
       } else {
         // Recursively process children even if parent tag is not directly acceptable (e.g., DIV wrapping P tags)
         element.childNodes.forEach(child => {
-          if (child.nodeType === Node.ELEMENT_NODE) {
+          if (child.nodeType === window.Node.ELEMENT_NODE) {
             extractTextNodes(child as Element);
           }
         });
@@ -204,44 +204,24 @@ export async function POST(req: Request) {
       });
     }
 
-    // --- Fetch and parse article content using ZenRows (JS Render only) ---
-    const zenRowsApiKey = process.env.ZENROWS_API_KEY;
-    if (!zenRowsApiKey) {
-      console.error('ZenRows API key is missing. Please set ZENROWS_API_KEY environment variable.');
-      return new Response(JSON.stringify({ error: 'Server configuration error: Missing API key.' }), {
-        status: 500,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-    // Construct the ZenRows URL with js_render only (removed autoparse)
-    const zenRowsUrl = `https://api.zenrows.com/v1/?apikey=${zenRowsApiKey}&url=${encodeURIComponent(url)}&js_render=true`;
-
-    console.log(`Fetching article HTML via ZenRows (JS Render Enabled): ${url}`);
+    // --- Fetch and parse article content directly ---
+    console.log(`Fetching article HTML directly from: ${url}`);
     let articleData: { title: string; content: string; url: string }; // Define structure
 
     try {
-      const zenResponse = await fetch(zenRowsUrl, {
-        // Removed 'Accept': 'application/json' as we expect HTML now
+      const response = await fetch(url, {
+        headers: {
+          // Set a user-agent to mimic a browser to avoid blocks
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
       });
 
-      if (!zenResponse.ok) {
-        // Attempt to read error response from ZenRows
-        let errorBody = 'Unknown ZenRows error';
-        try {
-          errorBody = await zenResponse.text(); // Get error text
-        } catch (_) { /* ignore */ }
-        console.error(`ZenRows API error: ${zenResponse.status} ${zenResponse.statusText}`, errorBody);
-        // Check for specific error suggesting autoparse again (shouldn't happen now, but good practice)
-        if (errorBody.includes('autoparse')) {
-            throw new Error(`ZenRows failed (${zenResponse.status}): Suggests using autoparse, but it failed previously. URL: ${url}`);
-        } else {
-            throw new Error(`Failed to fetch article HTML via ZenRows: ${zenResponse.status} - Check server logs.`);
-        }
+      if (!response.ok) {
+        throw new Error(`Failed to fetch article HTML directly: ${response.status} ${response.statusText}`);
       }
 
-      const htmlText = await zenResponse.text(); // Get the HTML text
-      console.log(`Received HTML from ZenRows, length: ${htmlText.length}`);
+      const htmlText = await response.text();
+      console.log(`Received HTML directly, length: ${htmlText.length}`);
 
       // Parse the HTML using JSDOM
       const dom = new JSDOM(htmlText);
@@ -249,7 +229,7 @@ export async function POST(req: Request) {
 
       // Extract title and content using our helper functions
       const title = extractTitle(document) || url; // Use extracted title or fallback to URL
-      const content = extractReadableContent(document);
+      const content = extractReadableContent(document, dom.window);
 
       if (!content || content.length < 100) { // Check if content extraction failed or yielded too little
          console.warn(`Custom content extraction failed or yielded minimal text for ${url}.`);
@@ -267,15 +247,15 @@ export async function POST(req: Request) {
       console.log('Content length (extracted):', articleData.content.length);
 
     } catch (error: any) {
-      console.error('Error fetching or processing article via ZenRows/JSDOM:', error);
-          return new Response(JSON.stringify({ 
+      console.error('Error fetching or processing article directly:', error);
+      return new Response(JSON.stringify({ 
         error: `Failed to process article: ${error.message}`,
-            url: url 
-          }), {
-            status: 502,
-            headers: { 'Content-Type': 'application/json' }
-          });
-        }
+        url: url 
+      }), {
+        status: 502,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
     // --- End Fetch/Parse ---
 
     // --- Prepare prompt for OpenAI ---
@@ -353,7 +333,7 @@ export async function POST(req: Request) {
       // --- Use generateText to get the full response --- 
       const { text: aiResponseText } = await traceAICall(
         {
-          name: 'summarize-article-zenrows-jsdom', // Updated trace name again
+          name: 'summarize-article-direct-fetch', // Updated trace name
           model: 'gpt-4o',
           messages: [
             { role: 'system', content: systemPrompt },
