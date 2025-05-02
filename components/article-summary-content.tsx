@@ -22,6 +22,7 @@ interface ArticleSummaryContentProps {
   retryRelatedResearch: () => void;
   isPreview?: boolean;
   onBack?: () => void;
+  showBackButton?: boolean;
 }
 
 // Locked feature component for preview mode
@@ -105,7 +106,8 @@ export default function ArticleSummaryContent({
   url,
   retryRelatedResearch,
   isPreview = false,
-  onBack
+  onBack,
+  showBackButton = true
 }: ArticleSummaryContentProps) {
   const [articleTitle, setArticleTitle] = useState<string>('');
   const [articleSource, setArticleSource] = useState<string>('');
@@ -1140,8 +1142,8 @@ export default function ArticleSummaryContent({
 
   return (
     <div className="space-y-4">
-      {/* Back Button - Only show in preview mode */}
-      {isPreview && (
+      {/* Back Button - Only show in preview mode and if showBackButton is true */}
+      {isPreview && showBackButton && (
         <div className="mb-0 pb-0">
           <Button 
             variant="ghost" 

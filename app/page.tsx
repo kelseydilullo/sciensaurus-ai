@@ -4,7 +4,7 @@ import Link from "next/link"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   LucideBookOpen,
   LucideCalendarClock,
@@ -19,6 +19,7 @@ import { SciensaurusLogo } from "@/components/sciensaurus-logo"
 import { ArticleAnalyzer } from "@/components/article-analyzer"
 import ArticleSummaryContent from "@/components/article-summary-content"
 import React from "react"
+import PreAnalyzedArticles from "@/components/pre-analyzed-articles"
 
 interface ArticleData {
   title: string;
@@ -357,7 +358,7 @@ export default function LandingPage() {
       </header>
 
       {/* Hero Section */}
-      <section className="bg-[#1e3a6d] text-white py-16 md:py-24">
+      <section className="bg-[#1e3a6d] text-white py-16 pb-8 md:py-20 md:pb-12">
         <div className="container mx-auto px-4 text-center">
           <h1 className="text-4xl md:text-6xl font-bold mb-6">Your AI-Powered Research Companion</h1>
           <p className="text-xl md:text-2xl mb-10 max-w-3xl mx-auto">Scientific research summarized and demystified.</p>
@@ -373,8 +374,23 @@ export default function LandingPage() {
               />
             </div>
           </div>
+
+          {/* Demo Button */}
+          <div className="mt-4 mb-0">
+            <Link href="/demo">
+              <Button 
+                className="bg-white text-[#1e3a6d] hover:bg-gray-100 px-8 py-6 text-lg font-medium rounded-md"
+              >
+                See Demo
+                <LucideArrowRight className="ml-2 h-5 w-5" />
+              </Button>
+            </Link>
+          </div>
         </div>
       </section>
+
+      {/* Pre-Analyzed Articles Section */}
+      <PreAnalyzedArticles adminEmail="kelsey.s.oneill@gmail.com" />
 
       {/* Features Section */}
       <section id="features" className="py-16 md:py-24 bg-gray-50">
