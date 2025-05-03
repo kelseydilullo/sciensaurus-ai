@@ -698,14 +698,13 @@ export default function ArticleSummaryContent({
     const methodologyData = (data && data.cohortAnalysis) || 
                            (data && data.study_metadata) || 
                            (articleData && articleData.study_metadata) || {};
-    
-    // Ensure methodologyData is an object
     const methodologyDataObj = (typeof methodologyData === 'object' && methodologyData !== null) 
                                ? methodologyData 
                                : {};
 
     // DEBUG: Log methodologyDataObj before processing gender
-    console.log("[MethodologySection] methodologyDataObj:", methodologyDataObj);
+    console.log("[MethodologySection] Received data prop (result obj):", data);
+    console.log("[MethodologySection] Final methodologyDataObj for rendering:", JSON.stringify(methodologyDataObj, null, 2));
 
     // New function to extract age data from text
     const extractAgeDataFromText = (text?: string) => {
@@ -765,13 +764,17 @@ export default function ArticleSummaryContent({
       return null;
     };
 
-    // Get structured age data if available, otherwise try to extract from text
-    const ageDistributionText = data?.age_demographics?.distribution_raw || '';
+    // Use the raw age distribution text parsed earlier, now prioritizing the explicit db column
+    const ageDistributionText = data?.age_demographics?.distribution_raw || methodologyDataObj?.ageDistribution || '';
+    // DEBUG: Log the text being used for age chart
+    console.log("[MethodologySection] Age Distribution Text for Chart:", ageDistributionText);
     const extractedAgeData = extractAgeDataFromText(ageDistributionText);
     
     // Render Bar Chart for Age Demographics
     const renderAgeChart = () => {
       // Use extractedAgeData directly for the check and the data prop
+      // DEBUG: Log the data used for the age chart
+      console.log("[MethodologySection] Data for Age Chart:", extractedAgeData);
       if (!extractedAgeData) return null;
 
       return (
@@ -811,10 +814,16 @@ export default function ArticleSummaryContent({
 
     // Prepare gender data for pie chart if available 
     // Check directly under methodologyDataObj.gender first, then demographics.gender as fallback
-    const genderSource = methodologyDataObj?.gender || methodologyDataObj?.demographics?.gender;
+    // Prioritize the explicit db column first
+    const genderSource = data?.gender_demographics || methodologyDataObj?.gender || methodologyDataObj?.demographics?.gender;
+    // DEBUG: Log the object being used for gender chart
+    console.log("[MethodologySection] Gender Source Object for Chart:", JSON.stringify(genderSource, null, 2));
     const genderData = useMemo(() => {
       // Access gender_demographics directly from the top-level parsedData/articleData
-      const gender = data?.gender_demographics; 
+      // Corrected: Access the parsed gender data from genderSource
+      const gender = genderSource; 
+      // DEBUG: Log the specific gender object being processed
+      console.log("[MethodologySection] Gender Object for Pie Chart:", gender);
       const dataArray = [];
       // Check if gender object exists and has valid properties
       if (gender && (typeof gender.male === 'number' || typeof gender.female === 'number' || typeof gender.other === 'number')) {
@@ -824,10 +833,12 @@ export default function ArticleSummaryContent({
       }
       // Return data only if there are entries (value > 0 check is now inside)
       return dataArray;
-    }, [data?.gender_demographics]); // Depend on the correct field
+    }, [genderSource]); // Depend on the correct field
 
     // Render Pie Chart for Gender Demographics
     const renderGenderChart = () => {
+      // DEBUG: Log the final data array for the gender chart
+      console.log("[MethodologySection] Data Array for Gender Chart:", genderData);
       if (genderData.length === 0) return null;
 
       const COLORS = ['#4299E1', '#ED64A6', '#9F7AEA'];
